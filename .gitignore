@@ -12,6 +12,8 @@ dist/
 # Local credentials & caches (không push token cá nhân lên git)
 .samsung_monitor_control.json
 *.token
+probe_results.json
+*.log
 
 # Python cache
 __pycache__/

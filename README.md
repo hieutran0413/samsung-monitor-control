@@ -87,18 +87,39 @@ Samsung trang bị giao thức chuyên nghiệp **Samsung IP Control G2** trên 
 
 ### Phương án 2: Ứng dụng Menu Bar macOS (Native Swift + SwiftUI)
 - Menu Bar icon mặt trời siêu nhẹ, tiêu tốn 0% CPU khi chạy nền.
-- Kéo thả Slider mượt mà (đã có debounce 100ms tránh nghẽn socket).
-- Các nút chọn nhanh mức độ sáng: **10 (Tối)**, **25 (Vừa)**, **40 (Sáng)**, **50 (Tối đa)**.
-- Tích hợp sẵn nút **"Cấp quyền / Ghép nối lại"** và ô đổi IP ngay trên giao diện.
+- Giao diện chia 3 Tab chuyên nghiệp:
+  1. **Hiển thị:** Thanh trượt Đèn nền (Backlight 0–50), 4 nút chọn nhanh (10, 25, 40, 50), Độ tương phản (Contrast 0–50), Độ nét (Sharpness 0–20).
+  2. **Game & Âm thanh:** Bật/Tắt Game Mode (Low Latency) 1 chạm (`On` / `Off` / `Auto`), 6 Profile âm thanh (`Standard`, `Game`, `Music`, `Movie`, `Amplify`, `Adaptive`), Thanh trượt âm lượng loa màn hình (0–100) và nút Mute.
+  3. **Điều khiển & Cài đặt:** Phím Remote D-Pad ảo (Lên, Xuống, Trái, Phải, Enter, Return, Menu, Home), Nút Tắt màn hình (`powerOff`), Ghép nối lại và đổi IP.
 - Xem chi tiết: [Hướng dẫn Standalone Mac App](docs/guides/STANDALONE_MAC_APP.md).
 
-### Phương án 3: Python CLI
-Dành cho người thích dòng lệnh, tích hợp Raycast Script Commands, Alfred Workflow, hoặc macOS Shortcuts:
+### Phương án 3: Python CLI Đa Năng
+Hỗ trợ đầy đủ các tính năng phần cứng, tích hợp dễ dàng vào Raycast Script Commands, Alfred Workflow, hoặc macOS Shortcuts:
 ```bash
-python3 samsung_ipc.py get          # Xem mức hiện tại (0 - 50)
-python3 samsung_ipc.py set 35       # Đặt độ sáng mức 35
-python3 samsung_ipc.py up           # Tăng 5 mức
-python3 samsung_ipc.py down         # Giảm 5 mức
+# 1. Điều khiển độ sáng đèn nền thật (0-50)
+python3 samsung_ipc.py get                  # Đọc độ sáng hiện tại
+python3 samsung_ipc.py set 35               # Đặt độ sáng mức 35
+python3 samsung_ipc.py up / down            # Tăng / Giảm 5 mức
+
+# 2. Điều khiển Game Mode (Low Latency)
+python3 samsung_ipc.py game-mode            # Xem trạng thái Game Mode
+python3 samsung_ipc.py game-mode on         # Bật Game Mode (giảm độ trễ tối đa)
+python3 samsung_ipc.py game-mode off        # Tắt Game Mode (chuẩn màu đồ họa)
+python3 samsung_ipc.py game-mode auto       # Chế độ tự động
+
+# 3. Chỉnh thông số hình ảnh phần cứng
+python3 samsung_ipc.py contrast 45          # Đặt độ tương phản (0-50)
+python3 samsung_ipc.py sharpness 10         # Đặt độ sắc nét (0-20)
+
+# 4. Điều khiển âm thanh & loa màn hình
+python3 samsung_ipc.py sound-mode Music     # Đổi chế độ âm thanh (Standard/Game/Music/Movie/Amplify/Adaptive)
+python3 samsung_ipc.py volume 60            # Đặt âm lượng loa 60%
+python3 samsung_ipc.py mute toggle          # Bật/tắt tiếng loa màn hình
+
+# 5. Phím điều khiển từ xa & Nguồn
+python3 samsung_ipc.py key menu             # Gửi phím remote (enter, return, firstScreen, cursorUp...)
+python3 samsung_ipc.py power off            # Tắt màn hình thật
+python3 samsung_ipc.py status               # Xuất toàn bộ trạng thái hiện tại dưới dạng JSON
 ```
 
 ---

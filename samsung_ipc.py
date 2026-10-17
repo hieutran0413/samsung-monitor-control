@@ -1,19 +1,28 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 """
-Samsung IP Control -> Điều khiển độ sáng đèn nền thật (Hardware Backlight) cho Samsung ViewFinity S9 / Smart Monitor.
+Samsung ViewFinity S9 / Smart Monitor Hardware Control CLI.
 
 Giao thức: HTTPS JSON-RPC 2.0 trên cổng TCP 1516 ("Samsung IP Control G2").
-Xác thực: Ghép nối 1 lần qua phương thức `createAccessToken` (màn hình hiện popup Allow).
-Lưu trữ: Tự động lưu Token và mã vân tay chứng chỉ vào ~/.samsung_monitor_control.json và macOS Keychain.
+Xác thực: Ghép nối 1 lần qua `pair` (lưu an toàn vào ~/.samsung_monitor_control.json và Keychain).
 
-Cách dùng:
-    python3 samsung_ipc.py pair [HOST]     # Bắt tay ghép nối màn hình
-    python3 samsung_ipc.py get             # Đọc độ sáng hiện tại (0 - 50)
-    python3 samsung_ipc.py set <0-50>      # Đặt độ sáng đèn nền thật
-    python3 samsung_ipc.py up [STEP]       # Tăng độ sáng (mặc định bước 5)
-    python3 samsung_ipc.py down [STEP]     # Giảm độ sáng (mặc định bước 5)
-    python3 samsung_ipc.py set-host <IP>   # Cập nhật địa chỉ IP màn hình
-    python3 samsung_ipc.py info            # Thông tin thiết bị
+Các lệnh hỗ trợ:
+    python3 samsung_ipc.py pair [HOST]          # Ghép nối và lấy token
+    python3 samsung_ipc.py get                  # Đọc độ sáng đèn nền thật (0-50)
+    python3 samsung_ipc.py set <0-50>           # Đặt độ sáng đèn nền thật
+    python3 samsung_ipc.py up [STEP]            # Tăng độ sáng (mặc định 5)
+    python3 samsung_ipc.py down [STEP]          # Giảm độ sáng (mặc định 5)
+    python3 samsung_ipc.py game-mode [on|off|auto]  # Đọc/bật/tắt Game Mode (Low Latency)
+    python3 samsung_ipc.py sound-mode [MODE]    # Đọc/đổi chế độ âm thanh (Standard/Game/Music/Movie...)
+    python3 samsung_ipc.py contrast [<0-50>]    # Đọc/đặt độ tương phản
+    python3 samsung_ipc.py sharpness [<0-20>]   # Đọc/đặt độ sắc nét
+    python3 samsung_ipc.py volume [<0-100>]     # Đọc/đặt âm lượng loa màn hình
+    python3 samsung_ipc.py mute [on|off|toggle] # Đọc/bật/tắt mute
+    python3 samsung_ipc.py power [on|off|reboot]# Bật/tắt nguồn/khởi động lại màn hình
+    python3 samsung_ipc.py key <remoteKey>      # Gửi phím remote (cursorUp, enter, menu, return...)
+    python3 samsung_ipc.py input [source]       # Đọc/chuyển nguồn vào (USB-C, HDMI...)
+    python3 samsung_ipc.py status               # Đọc toàn bộ trạng thái màn hình (JSON)
+    python3 samsung_ipc.py set-host <IP>        # Cập nhật địa chỉ IP màn hình
+    python3 samsung_ipc.py info                 # Thông tin phần cứng màn hình
 """
 import argparse
 import hashlib
@@ -36,7 +45,9 @@ PAIR_TIMEOUT     = 65
 
 AUTH_CODES = {
     -32700: "chưa ghép nối (not paired) hoặc token đã bị đổi",
-    -32010: "thông báo Allow trên màn hình bị từ chối hoặc hết giờ"
+    -32010: "thông báo Allow trên màn hình bị từ chối hoặc hết giờ",
+    -32602: "tham số không hợp lệ",
+    -32601: "chức năng không được hỗ trợ bởi firmware",
 }
 
 
@@ -74,18 +85,14 @@ class IPCError(Exception):
 
 
 def keychain_get(account):
-    r = subprocess.run(
-        ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-w"],
-        capture_output=True, text=True
-    )
+    cmd = ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-w"]
+    r = subprocess.run(cmd, capture_output=True, text=True)
     return r.stdout.strip() if r.returncode == 0 else None
 
 
 def keychain_set(account, secret):
     cmd = 'add-generic-password -U -s "%s" -a "%s" -w "%s"\n' % (KEYCHAIN_SERVICE, account, secret)
-    r = subprocess.run(["security", "-i"], input=cmd, capture_output=True, text=True)
-    if r.returncode != 0 or "error" in r.stderr.lower():
-        pass
+    subprocess.run(["security", "-i"], input=cmd, capture_output=True, text=True)
 
 
 def _read_http(sock):
@@ -119,6 +126,9 @@ def connect(host, timeout):
 
 def rpc(method, params=None, token=None, pin=None, timeout=TIMEOUT, host=None):
     target_host = host or HOST
+    if not target_host:
+        raise IPCError("Chưa cấu hình địa chỉ IP màn hình; hãy chạy `python3 samsung_ipc.py pair <IP>`")
+
     body = {"jsonrpc": "2.0", "id": "1", "method": method}
     if token is not None:
         body["params"] = dict({"AccessToken": token}, **(params or {}))
@@ -148,9 +158,10 @@ def rpc(method, params=None, token=None, pin=None, timeout=TIMEOUT, host=None):
         raise IPCError("Lỗi kết nối: %s" % exc)
 
     try:
-        reply = json.loads(raw_body.decode() or "{}")
+        reply = json.loads(raw_body.decode(errors="replace") or "{}")
     except ValueError:
         raise IPCError("Phản hồi không hợp lệ từ màn hình (%s)" % status)
+
     if "result" in reply:
         return reply["result"], fingerprint
     err = reply.get("error", reply)
@@ -158,7 +169,7 @@ def rpc(method, params=None, token=None, pin=None, timeout=TIMEOUT, host=None):
     hint = AUTH_CODES.get(code)
     raise IPCError("%s thất bại: mã %s %s%s" % (
         method, code, err.get("message"),
-        " - %s; hãy bấm [Ghép nối lại]" % hint if hint else ""
+        " - %s" % hint if hint else ""
     ))
 
 
@@ -167,7 +178,6 @@ def credentials():
     if cfg.get("token") and cfg.get("cert"):
         return cfg["token"], cfg["cert"]
 
-    # Dự phòng đọc từ Keychain
     token = keychain_get(HOST + ":token")
     pin = keychain_get(HOST + ":cert")
     if token and pin:
@@ -191,6 +201,144 @@ def set_backlight(value):
     token, pin = credentials()
     rpc("backlightControl", {"backlight": value}, token=token, pin=pin)
     return value
+
+
+def get_game_mode():
+    token, pin = credentials()
+    result, _ = rpc("gameModeControl", token=token, pin=pin)
+    return result.get("gameMode", "Unknown")
+
+
+def set_game_mode(mode):
+    norm = mode.strip().lower()
+    mapping = {"on": "On", "off": "Off", "auto": "Auto", "1": "On", "0": "Off", "true": "On", "false": "Off"}
+    target = mapping.get(norm, mode.capitalize())
+    token, pin = credentials()
+    result, _ = rpc("gameModeControl", {"gameMode": target}, token=token, pin=pin)
+    return result.get("gameMode", target)
+
+
+def get_sound_mode():
+    token, pin = credentials()
+    result, _ = rpc("soundModeControl", token=token, pin=pin)
+    return result.get("soundMode", "Unknown")
+
+
+def set_sound_mode(mode):
+    token, pin = credentials()
+    result, _ = rpc("soundModeControl", {"soundMode": mode}, token=token, pin=pin)
+    return result.get("soundMode", mode)
+
+
+def get_contrast():
+    token, pin = credentials()
+    result, _ = rpc("contrastControl", token=token, pin=pin)
+    return int(result["contrast"])
+
+
+def set_contrast(value):
+    val = max(0, min(50, int(round(float(value)))))
+    token, pin = credentials()
+    result, _ = rpc("contrastControl", {"contrast": val}, token=token, pin=pin)
+    return int(result.get("contrast", val))
+
+
+def get_sharpness():
+    token, pin = credentials()
+    result, _ = rpc("sharpnessControl", token=token, pin=pin)
+    return int(result["sharpness"])
+
+
+def set_sharpness(value):
+    val = max(0, min(20, int(round(float(value)))))
+    token, pin = credentials()
+    result, _ = rpc("sharpnessControl", {"sharpness": val}, token=token, pin=pin)
+    return int(result.get("sharpness", val))
+
+
+def get_volume():
+    token, pin = credentials()
+    result, _ = rpc("directVolumeControl", token=token, pin=pin)
+    return int(result.get("volume", 0))
+
+
+def set_volume(value):
+    val = max(0, min(100, int(round(float(value)))))
+    token, pin = credentials()
+    result, _ = rpc("directVolumeControl", {"volume": val}, token=token, pin=pin)
+    return int(result.get("volume", val))
+
+
+def get_mute():
+    token, pin = credentials()
+    result, _ = rpc("muteControl", token=token, pin=pin)
+    return result.get("mute", "muteOff")
+
+
+def set_mute(action):
+    token, pin = credentials()
+    if action == "toggle":
+        cur = get_mute()
+        target = "muteOff" if cur == "muteOn" else "muteOn"
+    else:
+        norm = action.strip().lower()
+        target = "muteOn" if norm in ("on", "true", "1", "muteon") else "muteOff"
+    result, _ = rpc("muteControl", {"mute": target}, token=token, pin=pin)
+    return result.get("mute", target)
+
+
+def control_power(action):
+    norm = action.strip().lower()
+    mapping = {
+        "on": "powerOn", "poweron": "powerOn",
+        "off": "powerOff", "poweroff": "powerOff",
+        "reboot": "reboot"
+    }
+    target = mapping.get(norm, action)
+    token, pin = credentials()
+    result, _ = rpc("powerControl", {"power": target}, token=token, pin=pin)
+    return result.get("power", target)
+
+
+def send_remote_key(key):
+    token, pin = credentials()
+    result, _ = rpc("remoteKeyControl", {"remoteKey": key}, token=token, pin=pin)
+    return result.get("remoteKey", key)
+
+
+def get_input_source():
+    token, pin = credentials()
+    result, _ = rpc("inputSourceControl", token=token, pin=pin)
+    return result.get("inputSource", "Unknown")
+
+
+def set_input_source(source):
+    token, pin = credentials()
+    result, _ = rpc("inputSourceControl", {"inputSource": source}, token=token, pin=pin)
+    return result.get("inputSource", source)
+
+
+def get_full_status():
+    token, pin = credentials()
+    states, _ = rpc("getTVStates", token=token, pin=pin)
+    backlight = get_backlight()
+    game_mode = get_game_mode()
+    contrast = get_contrast()
+    sharpness = get_sharpness()
+
+    return {
+        "host": HOST,
+        "backlight": backlight,
+        "contrast": contrast,
+        "sharpness": sharpness,
+        "gameMode": game_mode,
+        "soundMode": states.get("soundMode", "Unknown"),
+        "volume": states.get("volume", 0),
+        "mute": states.get("mute", "muteOff"),
+        "inputSource": states.get("inputSource", "Unknown"),
+        "pictureMode": states.get("pictureMode", "Unknown"),
+        "pictureSize": states.get("pictureSize", "Unknown"),
+    }
 
 
 def pair(target_host=None):
@@ -227,23 +375,61 @@ def pair(target_host=None):
 
 def main():
     global HOST
-    ap = argparse.ArgumentParser(description="Samsung ViewFinity S9 IP Control - Hardware Backlight")
+    ap = argparse.ArgumentParser(description="Samsung ViewFinity S9 IP Control - Hardware Control")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    
-    p_pair = sub.add_parser("pair")
-    p_pair.add_argument("host", nargs="?", default=None, help="IP của màn hình")
-    
-    sub.add_parser("get")
-    
-    p_set = sub.add_parser("set")
-    p_set.add_argument("value", help="Độ sáng đèn nền thật 0-50")
 
-    p_host = sub.add_parser("set-host")
-    p_host.add_argument("host", help="Địa chỉ IP mới của màn hình")
-    
+    # 1. Ghép nối & kết nối
+    p_pair = sub.add_parser("pair", help="Ghép nối với màn hình")
+    p_pair.add_argument("host", nargs="?", default=None, help="IP của màn hình")
+
+    p_host = sub.add_parser("set-host", help="Cập nhật IP màn hình")
+    p_host.add_argument("host", help="Địa chỉ IP mới")
+
+    # 2. Độ sáng đèn nền (Backlight)
+    sub.add_parser("get", help="Đọc độ sáng đèn nền thật (0-50)")
+
+    p_set = sub.add_parser("set", help="Đặt độ sáng đèn nền thật (0-50)")
+    p_set.add_argument("value", help="Giá trị độ sáng 0-50")
+
     for name in ("up", "down"):
-        sub.add_parser(name).add_argument("step", nargs="?", type=int, default=DEFAULT_STEP)
-    sub.add_parser("info")
+        sub.add_parser(name, help="Tăng/giảm độ sáng").add_argument("step", nargs="?", type=int, default=DEFAULT_STEP)
+
+    # 3. Game Mode (Low Latency)
+    p_gm = sub.add_parser("game-mode", help="Đọc hoặc đặt Game Mode")
+    p_gm.add_argument("mode", nargs="?", choices=["on", "off", "auto", "On", "Off", "Auto"], help="Chế độ Game Mode")
+
+    # 4. Sound Mode
+    p_sm = sub.add_parser("sound-mode", help="Đọc hoặc đặt chế độ âm thanh")
+    p_sm.add_argument("mode", nargs="?", help="Chế độ âm thanh (Standard, Game, Music, Movie, Amplify, Adaptive, Optimized)")
+
+    # 5. Hình ảnh: Contrast & Sharpness
+    p_contrast = sub.add_parser("contrast", help="Đọc hoặc đặt độ tương phản (0-50)")
+    p_contrast.add_argument("value", nargs="?", type=int, help="Độ tương phản 0-50")
+
+    p_sharp = sub.add_parser("sharpness", help="Đọc hoặc đặt độ sắc nét (0-20)")
+    p_sharp.add_argument("value", nargs="?", type=int, help="Độ sắc nét 0-20")
+
+    # 6. Âm thanh: Volume & Mute
+    p_vol = sub.add_parser("volume", help="Đọc hoặc đặt âm lượng (0-100)")
+    p_vol.add_argument("value", nargs="?", type=int, help="Mức âm lượng 0-100")
+
+    p_mute = sub.add_parser("mute", help="Đọc hoặc đặt tắt tiếng")
+    p_mute.add_argument("action", nargs="?", choices=["on", "off", "toggle"], help="Trạng thái mute")
+
+    # 7. Nguồn & Phím remote
+    p_power = sub.add_parser("power", help="Điều khiển nguồn màn hình")
+    p_power.add_argument("action", nargs="?", choices=["on", "off", "reboot"], default="on", help="powerOn, powerOff, reboot")
+
+    p_key = sub.add_parser("key", help="Gửi phím điều khiển từ xa")
+    p_key.add_argument("name", help="Tên phím (cursorUp, cursorDn, cursorLeft, cursorRight, enter, menu, return, firstScreen)")
+
+    p_input = sub.add_parser("input", help="Đọc hoặc chuyển nguồn vào")
+    p_input.add_argument("source", nargs="?", help="Tên nguồn (USB-C, HDMI1, HDMI2...)")
+
+    # 8. Trạng thái & thông tin
+    sub.add_parser("status", help="Đọc toàn bộ trạng thái màn hình (JSON)")
+    sub.add_parser("info", help="Thông tin phần cứng màn hình")
+
     args = ap.parse_args()
 
     try:
@@ -261,6 +447,47 @@ def main():
         elif args.cmd in ("up", "down"):
             step = args.step if args.cmd == "up" else -args.step
             print(set_backlight(get_backlight() + step))
+        elif args.cmd == "game-mode":
+            if args.mode:
+                print(set_game_mode(args.mode))
+            else:
+                print(get_game_mode())
+        elif args.cmd == "sound-mode":
+            if args.mode:
+                print(set_sound_mode(args.mode))
+            else:
+                print(get_sound_mode())
+        elif args.cmd == "contrast":
+            if args.value is not None:
+                print(set_contrast(args.value))
+            else:
+                print(get_contrast())
+        elif args.cmd == "sharpness":
+            if args.value is not None:
+                print(set_sharpness(args.value))
+            else:
+                print(get_sharpness())
+        elif args.cmd == "volume":
+            if args.value is not None:
+                print(set_volume(args.value))
+            else:
+                print(get_volume())
+        elif args.cmd == "mute":
+            if args.action:
+                print(set_mute(args.action))
+            else:
+                print(get_mute())
+        elif args.cmd == "power":
+            print(control_power(args.action))
+        elif args.cmd == "key":
+            print(send_remote_key(args.name))
+        elif args.cmd == "input":
+            if args.source:
+                print(set_input_source(args.source))
+            else:
+                print(get_input_source())
+        elif args.cmd == "status":
+            print(json.dumps(get_full_status(), indent=2, ensure_ascii=False))
         elif args.cmd == "info":
             token, pin = credentials()
             result, _ = rpc("getDeviceInformation", token=token, pin=pin)
