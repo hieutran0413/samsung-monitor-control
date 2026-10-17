@@ -555,25 +555,20 @@ struct MonitorPopoverView: View {
                             .foregroundColor(.secondary)
                     }
 
-                    Picker("", selection: Binding(
-                        get: {
-                            if model.pictureMode.contains("P3") || model.pictureMode.contains("327712") {
-                                return "DCI-P3"
-                            } else if model.pictureMode.contains("709") || model.pictureMode.contains("327713") {
-                                return "BT.709"
-                            } else if model.pictureMode.contains("Entertainment") || model.pictureMode.contains("65541") {
-                                return "Entertainment"
-                            }
-                            return "sRGB"
-                        },
-                        set: { model.setPictureMode(to: $0) }
-                    )) {
-                        Text("sRGB").tag("sRGB")
-                        Text("DCI-P3").tag("DCI-P3")
-                        Text("BT.709").tag("BT.709")
-                        Text("Phim").tag("Entertainment")
+                    HStack(spacing: 5) {
+                        ColorModePill(title: "sRGB", subtitle: "Web", isSelected: model.pictureMode.contains("sRGB") || model.pictureMode.contains("327714")) {
+                            model.setPictureMode(to: "srgb")
+                        }
+                        ColorModePill(title: "DCI-P3", subtitle: "Cinema", isSelected: model.pictureMode.contains("P3") || model.pictureMode.contains("327712")) {
+                            model.setPictureMode(to: "dci-p3")
+                        }
+                        ColorModePill(title: "BT.709", subtitle: "HDTV", isSelected: model.pictureMode.contains("709") || model.pictureMode.contains("327713")) {
+                            model.setPictureMode(to: "bt709")
+                        }
+                        ColorModePill(title: "Phim", subtitle: "Giải trí", isSelected: model.pictureMode.contains("Entertainment") || model.pictureMode.contains("65541")) {
+                            model.setPictureMode(to: "entertainment")
+                        }
                     }
-                    .pickerStyle(.segmented)
                 }
 
                 Divider()
@@ -1099,6 +1094,32 @@ struct PresetPill: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 4)
+            .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.12))
+            .foregroundColor(isSelected ? .white : .primary)
+            .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// Nút chọn không gian màu phần cứng
+struct ColorModePill: View {
+    let title: String
+    let subtitle: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 1) {
+                Text(title)
+                    .font(.system(size: 11, weight: isSelected ? .bold : .medium))
+                Text(subtitle)
+                    .font(.system(size: 8))
+                    .foregroundColor(isSelected ? .white.opacity(0.85) : .secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 5)
             .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.12))
             .foregroundColor(isSelected ? .white : .primary)
             .cornerRadius(6)

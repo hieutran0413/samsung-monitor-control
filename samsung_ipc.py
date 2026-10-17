@@ -424,6 +424,7 @@ PICTURE_MODES = {
     "p3": "Gen_327712",
     "bt709": "Gen_327713",
     "bt-709": "Gen_327713",
+    "bt.709": "Gen_327713",
     "srgb": "Gen_327714",
     "graphic": "Gen_327714",
     "dicom": "Gen_327715",
