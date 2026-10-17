@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Build artifacts
+*.app/
+*.dSYM/
+build/
+dist/
+
+# Local credentials & caches (không push token cá nhân lên git)
+.samsung_monitor_control.json
+*.token
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Xcode / SPM
+.build/
+*.xcodeproj/
+*.xcworkspace/
+DerivedData/
