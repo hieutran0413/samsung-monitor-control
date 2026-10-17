@@ -557,12 +557,12 @@ struct MonitorPopoverView: View {
 
                     Picker("", selection: Binding(
                         get: {
-                            if model.pictureMode.contains("P3") || model.pictureMode.contains("327713") {
+                            if model.pictureMode.contains("P3") || model.pictureMode.contains("327712") {
                                 return "DCI-P3"
+                            } else if model.pictureMode.contains("709") || model.pictureMode.contains("327713") {
+                                return "BT.709"
                             } else if model.pictureMode.contains("Entertainment") || model.pictureMode.contains("65541") {
                                 return "Entertainment"
-                            } else if model.pictureMode.contains("Standard") || model.pictureMode.contains("458753") {
-                                return "Standard"
                             }
                             return "sRGB"
                         },
@@ -570,8 +570,8 @@ struct MonitorPopoverView: View {
                     )) {
                         Text("sRGB").tag("sRGB")
                         Text("DCI-P3").tag("DCI-P3")
+                        Text("BT.709").tag("BT.709")
                         Text("Phim").tag("Entertainment")
-                        Text("Standard").tag("Standard")
                     }
                     .pickerStyle(.segmented)
                 }

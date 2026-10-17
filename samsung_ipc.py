@@ -420,9 +420,14 @@ def get_peripherals():
 
 
 PICTURE_MODES = {
+    "dci-p3": "Gen_327712",
+    "p3": "Gen_327712",
+    "bt709": "Gen_327713",
+    "bt-709": "Gen_327713",
     "srgb": "Gen_327714",
-    "dci-p3": "Gen_327713",
     "graphic": "Gen_327714",
+    "dicom": "Gen_327715",
+    "custom": "Gen_327716",
     "entertainment": "Gen_65541",
     "standard": "Gen_458753",
     "preset1": "Gen_327712",
@@ -438,8 +443,11 @@ def get_picture_mode():
     states, _ = rpc("getTVStates", token=token, pin=pin)
     raw = states.get("pictureMode", "Unknown")
     for name, code in [
+        ("DCI-P3", "Gen_327712"),
+        ("BT.709", "Gen_327713"),
         ("sRGB", "Gen_327714"),
-        ("DCI-P3", "Gen_327713"),
+        ("DICOM", "Gen_327715"),
+        ("Custom", "Gen_327716"),
         ("Entertainment", "Gen_65541"),
         ("Standard", "Gen_458753"),
         ("Graphic", "Gen_327714"),
@@ -543,8 +551,11 @@ def get_full_status():
     raw_pm = states.get("pictureMode", "Unknown")
     friendly_pm = raw_pm
     for name, code in [
+        ("DCI-P3", "Gen_327712"),
+        ("BT.709", "Gen_327713"),
         ("sRGB", "Gen_327714"),
-        ("DCI-P3", "Gen_327713"),
+        ("DICOM", "Gen_327715"),
+        ("Custom", "Gen_327716"),
         ("Entertainment", "Gen_65541"),
         ("Standard", "Gen_458753"),
     ]:
