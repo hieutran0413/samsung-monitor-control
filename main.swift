@@ -49,6 +49,11 @@ class MonitorModel: ObservableObject {
     @Published var monitorIP: String = ""
     @Published var showSettings: Bool = false
 
+    // Keyboard & Remote D-Pad feedback
+    @Published var activeKey: String = ""
+    @Published var activeKeyBadge: String = ""
+    private var resetKeyWorkItem: DispatchWorkItem?
+
     private var debounceBacklight: DispatchWorkItem?
     private var debounceContrast: DispatchWorkItem?
     private var debounceSharpness: DispatchWorkItem?
@@ -144,8 +149,7 @@ class MonitorModel: ObservableObject {
                     self.peripherals = periphs.compactMap { dict in
                         guard let name = dict["name"] as? String else { return nil }
                         let vendor = dict["vendor"] as? String ?? ""
-                        // Filter out non-user friendly internal hub strings
-                        if name == "Root" || name.contains("Hub") && vendor.isEmpty {
+                        if name == "Root" || (name.contains("Hub") && vendor.isEmpty) {
                             return nil
                         }
                         return USBPeripheral(name: name, vendor: vendor)
@@ -311,6 +315,21 @@ class MonitorModel: ObservableObject {
         }
     }
 
+    func flashKey(_ keyName: String, label: String) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.activeKey = keyName
+            self.activeKeyBadge = label
+            self.resetKeyWorkItem?.cancel()
+            let item = DispatchWorkItem { [weak self] in
+                self?.activeKey = ""
+                self?.activeKeyBadge = ""
+            }
+            self.resetKeyWorkItem = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45, execute: item)
+        }
+    }
+
     func setPower(_ action: String) {
         runScriptAsync(args: ["power", action]) { [weak self] success, out in
             if !success { self?.statusMessage = out }
@@ -338,11 +357,14 @@ class MonitorModel: ObservableObject {
     }
 }
 
+// Global shared model instance
+let sharedModel = MonitorModel()
+
 // ============================================================
 // GIAO DIỆN CHUẨN DESIGN SYSTEM APPLE (macOS CONTROL CENTER STYLE)
 // ============================================================
 struct MonitorPopoverView: View {
-    @StateObject var model = MonitorModel()
+    @ObservedObject var model: MonitorModel
     @State private var editIP: String = ""
 
     var body: some View {
@@ -573,7 +595,135 @@ struct MonitorPopoverView: View {
 
                 Divider()
 
-                // 6. Cụm thiết bị ngoại vi & Cổng kết nối (USB Hub & Peripherals)
+                // 6. Cụm điều khiển từ xa D-Pad & Bàn phím Mac (Remote Control)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        HStack(spacing: 5) {
+                            Image(systemName: "keyboard")
+                                .font(.system(size: 11))
+                                .foregroundColor(.accentColor)
+                            Text("Điều khiển từ xa (Remote)")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        Spacer()
+                        if !model.activeKeyBadge.isEmpty {
+                            Text("Đã bấm: \(model.activeKeyBadge)")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.accentColor)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.accentColor.opacity(0.12))
+                                .cornerRadius(4)
+                        }
+                    }
+
+                    // Visual D-Pad
+                    VStack(spacing: 4) {
+                        // Up
+                        HStack {
+                            Spacer()
+                            RemoteDpadKey(
+                                title: "↑",
+                                icon: "arrow.up",
+                                isHighlighted: model.activeKey == "cursorUp"
+                            ) {
+                                model.sendKey("cursorUp")
+                                model.flashKey("cursorUp", label: "↑")
+                            }
+                            .frame(width: 48, height: 26)
+                            Spacer()
+                        }
+
+                        // Left - OK - Right
+                        HStack(spacing: 6) {
+                            Spacer()
+                            RemoteDpadKey(
+                                title: "←",
+                                icon: "arrow.left",
+                                isHighlighted: model.activeKey == "cursorLeft"
+                            ) {
+                                model.sendKey("cursorLeft")
+                                model.flashKey("cursorLeft", label: "←")
+                            }
+                            .frame(width: 48, height: 26)
+
+                            RemoteDpadKey(
+                                title: "OK",
+                                icon: "checkmark",
+                                isProminent: true,
+                                isHighlighted: model.activeKey == "enter"
+                            ) {
+                                model.sendKey("enter")
+                                model.flashKey("enter", label: "Enter")
+                            }
+                            .frame(width: 54, height: 26)
+
+                            RemoteDpadKey(
+                                title: "→",
+                                icon: "arrow.right",
+                                isHighlighted: model.activeKey == "cursorRight"
+                            ) {
+                                model.sendKey("cursorRight")
+                                model.flashKey("cursorRight", label: "→")
+                            }
+                            .frame(width: 48, height: 26)
+                            Spacer()
+                        }
+
+                        // Down
+                        HStack {
+                            Spacer()
+                            RemoteDpadKey(
+                                title: "↓",
+                                icon: "arrow.down",
+                                isHighlighted: model.activeKey == "cursorDn"
+                            ) {
+                                model.sendKey("cursorDn")
+                                model.flashKey("cursorDn", label: "↓")
+                            }
+                            .frame(width: 48, height: 26)
+                            Spacer()
+                        }
+                    }
+                    .padding(6)
+                    .background(Color.secondary.opacity(0.06))
+                    .cornerRadius(8)
+
+                    // Cụm phím chức năng
+                    HStack(spacing: 5) {
+                        AppleButton(title: "Menu (M)", icon: "list.bullet") {
+                            model.sendKey("menu")
+                            model.flashKey("menu", label: "Menu")
+                        }
+                        AppleButton(title: "Home (H)", icon: "house") {
+                            model.sendKey("firstScreen")
+                            model.flashKey("firstScreen", label: "Home")
+                        }
+                        AppleButton(title: "Back (Esc)", icon: "arrow.uturn.backward") {
+                            model.sendKey("return")
+                            model.flashKey("return", label: "Esc")
+                        }
+                        AppleButton(title: "Exit", icon: "xmark") {
+                            model.sendKey("exit")
+                            model.flashKey("exit", label: "Exit")
+                        }
+                    }
+
+                    // Hướng dẫn phím Mac
+                    HStack(spacing: 4) {
+                        Image(systemName: "command")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                        Text("Phím Mac: Mũi tên (↑ ↓ ← →), Enter, Esc (Back), M, H")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 2)
+                }
+
+                Divider()
+
+                // 7. Cụm thiết bị ngoại vi & Cổng kết nối (USB Hub & Peripherals)
                 DisclosureGroup(
                     isExpanded: Binding(
                         get: { model.isPeripheralsExpanded },
@@ -653,7 +803,7 @@ struct MonitorPopoverView: View {
 
                 Divider()
 
-                // 7. Tùy chỉnh hình ảnh nâng cao (DisclosureGroup)
+                // 8. Tùy chỉnh hình ảnh nâng cao (DisclosureGroup)
                 DisclosureGroup(
                     isExpanded: Binding(
                         get: { model.isAdvancedExpanded },
@@ -715,20 +865,6 @@ struct MonitorPopoverView: View {
                                     .font(.system(size: 10, design: .monospaced))
                             }
                             Slider(value: Binding(get: { model.blackLevel }, set: { model.setBlackLevel(to: $0) }), in: -5...5, step: 1)
-                        }
-
-                        // Phím điều khiển nhanh (Remote Buttons)
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("Phím remote điều hướng")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-
-                            HStack(spacing: 5) {
-                                AppleButton(title: "Menu", icon: "list.bullet") { model.sendKey("menu") }
-                                AppleButton(title: "Home", icon: "house") { model.sendKey("firstScreen") }
-                                AppleButton(title: "Back", icon: "arrow.uturn.backward") { model.sendKey("return") }
-                                AppleButton(title: "OK", icon: "checkmark") { model.sendKey("enter") }
-                            }
                         }
 
                         // Cài đặt mạng / Ghép nối
@@ -802,7 +938,7 @@ struct MonitorPopoverView: View {
 
                 Divider()
 
-                // 8. Footer (macOS Menu Bar Standard)
+                // 9. Footer (macOS Menu Bar Standard)
                 HStack {
                     Button {
                         model.setPower("powerOff")
@@ -828,7 +964,7 @@ struct MonitorPopoverView: View {
             .padding(14)
         }
         .frame(width: 295)
-        .frame(maxHeight: 520)
+        .frame(maxHeight: 530)
     }
 
     func iconForDevice(name: String) -> String {
@@ -847,6 +983,41 @@ struct MonitorPopoverView: View {
             return "display"
         }
         return "usb"
+    }
+}
+
+// D-Pad Button with highlight effect
+struct RemoteDpadKey: View {
+    let title: String
+    let icon: String
+    var isProminent: Bool = false
+    var isHighlighted: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 2) {
+                if !icon.isEmpty {
+                    Image(systemName: icon)
+                        .font(.system(size: 10, weight: isProminent ? .bold : .medium))
+                }
+                if isProminent {
+                    Text(title)
+                        .font(.system(size: 11, weight: .bold))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(
+                isHighlighted ? Color.accentColor :
+                (isProminent ? Color.accentColor.opacity(0.85) : Color.secondary.opacity(0.12))
+            )
+            .foregroundColor(
+                isHighlighted || isProminent ? .white : .primary
+            )
+            .cornerRadius(5)
+            .animation(.snappy(duration: 0.1), value: isHighlighted)
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -904,7 +1075,9 @@ struct AppleButton: View {
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var popover: NSPopover!
-    var eventMonitor: Any?
+    var mouseEventMonitor: Any?
+    var localKeyMonitor: Any?
+    var globalKeyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -915,16 +1088,77 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         popover = NSPopover()
-        // popover.animates = false makes opening and closing INSTANTANEOUS (0ms delay)
         popover.animates = false
-        popover.contentSize = NSSize(width: 295, height: 480)
+        popover.contentSize = NSSize(width: 295, height: 500)
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: MonitorPopoverView())
+        popover.contentViewController = NSHostingController(rootView: MonitorPopoverView(model: sharedModel))
 
-        eventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+        // Monitor click outside to close popover
+        mouseEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             if let self = self, self.popover.isShown {
                 self.popover.performClose(nil)
             }
+        }
+
+        // Local monitor for Mac keyboard when app/popover is active
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self, self.popover.isShown else { return event }
+
+            // Do not intercept if user is typing in TextField (e.g. editIP)
+            if let responder = NSApp.keyWindow?.firstResponder,
+               responder is NSTextView || responder is NSTextField {
+                return event
+            }
+
+            if self.dispatchKey(event.keyCode) {
+                return nil // Event handled and consumed
+            }
+            return event
+        }
+
+        // Global monitor as fallback while popover is shown
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self, self.popover.isShown else { return }
+            _ = self.dispatchKey(event.keyCode)
+        }
+    }
+
+    func dispatchKey(_ keyCode: UInt16) -> Bool {
+        switch keyCode {
+        case 126: // Up Arrow
+            sharedModel.sendKey("cursorUp")
+            sharedModel.flashKey("cursorUp", label: "↑")
+            return true
+        case 125: // Down Arrow
+            sharedModel.sendKey("cursorDn")
+            sharedModel.flashKey("cursorDn", label: "↓")
+            return true
+        case 123: // Left Arrow
+            sharedModel.sendKey("cursorLeft")
+            sharedModel.flashKey("cursorLeft", label: "←")
+            return true
+        case 124: // Right Arrow
+            sharedModel.sendKey("cursorRight")
+            sharedModel.flashKey("cursorRight", label: "→")
+            return true
+        case 36, 76: // Enter / Return
+            sharedModel.sendKey("enter")
+            sharedModel.flashKey("enter", label: "OK (Enter)")
+            return true
+        case 53: // Escape
+            sharedModel.sendKey("return")
+            sharedModel.flashKey("return", label: "Back (Esc)")
+            return true
+        case 46: // 'M' or 'm' -> Menu
+            sharedModel.sendKey("menu")
+            sharedModel.flashKey("menu", label: "Menu (M)")
+            return true
+        case 4: // 'H' or 'h' -> Home
+            sharedModel.sendKey("firstScreen")
+            sharedModel.flashKey("firstScreen", label: "Home (H)")
+            return true
+        default:
+            return false
         }
     }
 
@@ -934,7 +1168,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(nil)
         } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
+            if let window = popover.contentViewController?.view.window {
+                window.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            }
         }
     }
 }
