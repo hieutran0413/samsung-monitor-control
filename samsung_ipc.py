@@ -63,7 +63,7 @@ def get_current_host():
     cfg = load_config()
     if cfg.get("host"):
         return cfg["host"]
-    return os.environ.get("SAMSUNG_IPC_HOST", "192.168.31.135")
+    return os.environ.get("SAMSUNG_IPC_HOST", "")
 
 
 HOST = get_current_host()

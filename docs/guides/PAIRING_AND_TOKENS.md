@@ -49,7 +49,7 @@ Giao thức Samsung IP Control sử dụng chuẩn mã hóa TLS kết hợp JSON
 
 1. Mở Terminal trên Mac, chạy lệnh:
    ```bash
-   python3 "/Volumes/My Data/Development/samsung-monitor-control/samsung_ipc.py" pair 192.168.31.135
+   python3 "/Volumes/My Data/Development/samsung-monitor-control/samsung_ipc.py" pair 192.168.x.x
    ```
 2. Socket kết nối sẽ giữ trạng thái chờ (blocking) tối đa 65 giây.
 3. Khi popup hiển thị trên màn hình S9, dùng remote bấm nút tròn giữa để chọn **Cho phép (Allow)**.
@@ -70,7 +70,7 @@ Giao thức Samsung IP Control sử dụng chuẩn mã hóa TLS kết hợp JSON
 - Định dạng lưu trữ:
   ```json
   {
-    "host": "192.168.31.135",
+    "host": "192.168.x.x",
     "token": "4a8f9c1b...",
     "cert_fingerprint": "e3b0c442..."
   }

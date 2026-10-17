@@ -111,7 +111,7 @@ python3 samsung_ipc.py down         # Giảm 5 mức
 2. Vào **All Settings (Tất cả cài đặt)** $\rightarrow$ **Connection (Kết nối)** $\rightarrow$ **Network (Mạng)** $\rightarrow$ **Expert Settings (Cài đặt chuyên môn)**.
 3. Bật **IP Remote** sang trạng thái **ON (Bật)**.
 4. Bật **Power On with Mobile** sang trạng thái **ON (Bật)**.
-5. Kiểm tra địa chỉ IP của màn hình tại: **Network $\rightarrow$ Network Status $\rightarrow$ IP Settings** (Ví dụ: `192.168.31.135`).
+5. Kiểm tra địa chỉ IP của màn hình tại: **Network $\rightarrow$ Network Status $\rightarrow$ IP Settings** (Ví dụ: `192.168.x.x`).
 
 > ⚠️ **LƯU Ý QUAN TRỌNG:** Màn hình phải đang hiển thị hình ảnh từ máy Mac (ngõ Type-C / Thunderbolt). Nếu màn hình đang ở giao diện Tizen Home Screen hoặc đang chạy app YouTube/Netflix, cửa sổ popup xin cấp quyền sẽ không thể hiển thị đè lên màn hình!
 
@@ -123,7 +123,7 @@ Chỉ cần thực hiện **1 lần duy nhất**:
 
 1. Mở Terminal trên Mac và chạy lệnh pair:
    ```bash
-   python3 samsung_ipc.py pair 192.168.31.135
+   python3 samsung_ipc.py pair 192.168.x.x
    ```
    *(Thay bằng IP màn hình của bạn)*
 

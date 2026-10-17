@@ -25,7 +25,7 @@ class BrightnessModel: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var isPairing: Bool = false
     @Published var statusMessage: String = ""
-    @Published var monitorIP: String = "192.168.31.135"
+    @Published var monitorIP: String = ""
     @Published var showSettings: Bool = false
 
     private var debounceWorkItem: DispatchWorkItem?
@@ -273,7 +273,7 @@ struct BrightnessPopoverView: View {
                         .font(.system(size: 10, weight: .medium))
                         .foregroundColor(.secondary)
                     HStack(spacing: 6) {
-                        TextField("192.168.31.135", text: $editIP)
+                        TextField("192.168.x.x", text: $editIP)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                             .font(.system(size: 11, design: .monospaced))
                         Button("Lưu & Pair") {
