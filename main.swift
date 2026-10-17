@@ -330,6 +330,13 @@ class MonitorModel: ObservableObject {
         }
     }
 
+    func triggerDevMode() {
+        statusMessage = "Đang gửi chuỗi 1-2-3-4-5 kích hoạt Dev Mode..."
+        runScriptAsync(args: ["dev-mode"]) { [weak self] success, out in
+            self?.statusMessage = out
+        }
+    }
+
     func setPower(_ action: String) {
         runScriptAsync(args: ["power", action]) { [weak self] success, out in
             if !success { self?.statusMessage = out }
@@ -703,9 +710,8 @@ struct MonitorPopoverView: View {
                             model.sendKey("return")
                             model.flashKey("return", label: "Esc")
                         }
-                        AppleButton(title: "Exit", icon: "xmark") {
-                            model.sendKey("exit")
-                            model.flashKey("exit", label: "Exit")
+                        AppleButton(title: "Dev Mode (12345)", icon: "terminal") {
+                            model.triggerDevMode()
                         }
                     }
 
@@ -714,7 +720,7 @@ struct MonitorPopoverView: View {
                         Image(systemName: "command")
                             .font(.system(size: 9))
                             .foregroundColor(.secondary)
-                        Text("Phím Mac: Mũi tên (↑ ↓ ← →), Enter, Esc (Back), M, H")
+                        Text("Phím Mac: Mũi tên (↑ ↓ ← →), Enter, Esc, M, H, Phím số (0-9)")
                             .font(.system(size: 9))
                             .foregroundColor(.secondary)
                     }
@@ -1156,6 +1162,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case 4: // 'H' or 'h' -> Home
             sharedModel.sendKey("firstScreen")
             sharedModel.flashKey("firstScreen", label: "Home (H)")
+            return true
+        case 18, 83: // 1
+            sharedModel.sendKey("number1")
+            sharedModel.flashKey("number1", label: "1")
+            return true
+        case 19, 84: // 2
+            sharedModel.sendKey("number2")
+            sharedModel.flashKey("number2", label: "2")
+            return true
+        case 20, 85: // 3
+            sharedModel.sendKey("number3")
+            sharedModel.flashKey("number3", label: "3")
+            return true
+        case 21, 86: // 4
+            sharedModel.sendKey("number4")
+            sharedModel.flashKey("number4", label: "4")
+            return true
+        case 23, 87: // 5
+            sharedModel.sendKey("number5")
+            sharedModel.flashKey("number5", label: "5")
+            return true
+        case 22, 88: // 6
+            sharedModel.sendKey("number6")
+            sharedModel.flashKey("number6", label: "6")
+            return true
+        case 26, 89: // 7
+            sharedModel.sendKey("number7")
+            sharedModel.flashKey("number7", label: "7")
+            return true
+        case 28, 91: // 8
+            sharedModel.sendKey("number8")
+            sharedModel.flashKey("number8", label: "8")
+            return true
+        case 25, 92: // 9
+            sharedModel.sendKey("number9")
+            sharedModel.flashKey("number9", label: "9")
+            return true
+        case 29, 82: // 0
+            sharedModel.sendKey("number0")
+            sharedModel.flashKey("number0", label: "0")
             return true
         default:
             return false

@@ -318,6 +318,15 @@ def set_input_source(source):
     return result.get("inputSource", source)
 
 
+def trigger_dev_mode():
+    import time
+    token, pin = credentials()
+    for num in [1, 2, 3, 4, 5]:
+        rpc("remoteKeyControl", {"remoteKey": f"number{num}"}, token=token, pin=pin)
+        time.sleep(0.2)
+    return "Đã gửi chuỗi số 1-2-3-4-5 kích hoạt Developer Mode!"
+
+
 def get_color():
     token, pin = credentials()
     result, _ = rpc("colorControl", token=token, pin=pin)
@@ -545,6 +554,8 @@ def main():
 
     sub.add_parser("peripherals", help="Liệt kê thiết bị ngoại vi đang cắm qua USB Hub của màn hình")
 
+    sub.add_parser("dev-mode", help="Gửi chuỗi phím 1-2-3-4-5 để mở popup Developer Mode")
+
     # 8. Trạng thái & thông tin
     sub.add_parser("status", help="Đọc toàn bộ trạng thái màn hình (JSON)")
     sub.add_parser("info", help="Thông tin phần cứng màn hình")
@@ -633,6 +644,8 @@ def main():
                 print(set_input_source(args.source))
             else:
                 print(get_input_source())
+        elif args.cmd == "dev-mode":
+            print(trigger_dev_mode())
         elif args.cmd == "status":
             print(json.dumps(get_full_status(), indent=2, ensure_ascii=False))
         elif args.cmd == "info":
