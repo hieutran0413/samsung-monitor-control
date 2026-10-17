@@ -34,6 +34,7 @@ class MonitorModel: ObservableObject {
     @Published var tint: Double = 0.0
     @Published var blackLevel: Double = 0.0
     @Published var gameMode: String = "On"
+    @Published var pictureMode: String = "sRGB"
     @Published var soundMode: String = "Standard"
     @Published var volume: Double = 50.0
     @Published var isMuted: Bool = false
@@ -136,6 +137,7 @@ class MonitorModel: ObservableObject {
                 else if let bl = json["blackLevel"] as? Int { self.blackLevel = Double(bl) }
 
                 if let g = json["gameMode"] as? String { self.gameMode = g }
+                if let pm = json["pictureMode"] as? String { self.pictureMode = pm }
                 if let sm = json["soundMode"] as? String { self.soundMode = sm }
                 if let spk = json["speakerSelect"] as? String { self.speakerSelect = spk }
 
@@ -241,6 +243,17 @@ class MonitorModel: ObservableObject {
             if success {
                 self?.gameMode = out
                 self?.statusMessage = ""
+            } else {
+                self?.statusMessage = out
+            }
+        }
+    }
+
+    func setPictureMode(to val: String) {
+        pictureMode = val
+        runScriptAsync(args: ["picture-mode", val.lowercased()]) { [weak self] success, out in
+            if success {
+                self?.fetchAllStates()
             } else {
                 self?.statusMessage = out
             }
@@ -524,6 +537,44 @@ struct MonitorPopoverView: View {
                     }
                 }
                 .toggleStyle(.switch)
+
+                Divider()
+
+                // 4b. Picture Mode (Không gian màu chuẩn phần cứng)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Image(systemName: "paintpalette.fill")
+                            .font(.system(size: 12))
+                            .foregroundColor(.indigo)
+                            .frame(width: 16)
+                        Text("Không gian màu (Color Space)")
+                            .font(.system(size: 12, weight: .medium))
+                        Spacer()
+                        Text(model.pictureMode)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+
+                    Picker("", selection: Binding(
+                        get: {
+                            if model.pictureMode.contains("P3") || model.pictureMode.contains("327713") {
+                                return "DCI-P3"
+                            } else if model.pictureMode.contains("Entertainment") || model.pictureMode.contains("65541") {
+                                return "Entertainment"
+                            } else if model.pictureMode.contains("Standard") || model.pictureMode.contains("458753") {
+                                return "Standard"
+                            }
+                            return "sRGB"
+                        },
+                        set: { model.setPictureMode(to: $0) }
+                    )) {
+                        Text("sRGB").tag("sRGB")
+                        Text("DCI-P3").tag("DCI-P3")
+                        Text("Phim").tag("Entertainment")
+                        Text("Standard").tag("Standard")
+                    }
+                    .pickerStyle(.segmented)
+                }
 
                 Divider()
 

@@ -419,18 +419,138 @@ def get_peripherals():
         return []
 
 
+PICTURE_MODES = {
+    "srgb": "Gen_327714",
+    "dci-p3": "Gen_327713",
+    "graphic": "Gen_327714",
+    "entertainment": "Gen_65541",
+    "standard": "Gen_458753",
+    "preset1": "Gen_327712",
+    "preset2": "Gen_327713",
+    "preset3": "Gen_327714",
+    "preset4": "Gen_327715",
+    "preset5": "Gen_327716",
+}
+
+
+def get_picture_mode():
+    token, pin = credentials()
+    states, _ = rpc("getTVStates", token=token, pin=pin)
+    raw = states.get("pictureMode", "Unknown")
+    for name, code in [
+        ("sRGB", "Gen_327714"),
+        ("DCI-P3", "Gen_327713"),
+        ("Entertainment", "Gen_65541"),
+        ("Standard", "Gen_458753"),
+        ("Graphic", "Gen_327714"),
+    ]:
+        if raw == code:
+            return f"{name} ({raw})"
+    return raw
+
+
+def set_picture_mode(mode):
+    token, pin = credentials()
+    norm = mode.strip().lower()
+    target = PICTURE_MODES.get(norm, mode)
+    result, _ = rpc("pictureModeControl", {"pictureMode": target}, token=token, pin=pin)
+    return result.get("pictureMode", target)
+
+
+def get_video_states():
+    token, pin = credentials()
+    result, _ = rpc("getVideoStates", token=token, pin=pin)
+    return result
+
+
+def get_multiview():
+    token, pin = credentials()
+    result, _ = rpc("multiviewControl", token=token, pin=pin)
+    return result
+
+
+def get_tizensdb_path():
+    local_bin = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "tizensdb")
+    if os.path.exists(local_bin) and os.access(local_bin, os.X_OK):
+        return local_bin
+    if os.path.exists("/tmp/tizensdb") and os.access("/tmp/tizensdb", os.X_OK):
+        return "/tmp/tizensdb"
+    return None
+
+
+def get_installed_apps():
+    sdb = get_tizensdb_path()
+    if not sdb:
+        raise IPCError("Không tìm thấy công cụ Tizen SDB (tizensdb)")
+    try:
+        out = subprocess.check_output([sdb, "apps", HOST], stderr=subprocess.STDOUT, text=True)
+        apps = []
+        cur = {}
+        for line in out.splitlines():
+            line = line.strip().strip("-")
+            if "=" in line:
+                k, _, v = line.partition("=")
+                k = k.strip()
+                v = v.strip().strip("-")
+                if k == "app_id":
+                    if "app_id" in cur and "app_title" in cur:
+                        apps.append(cur)
+                    cur = {"id": v}
+                elif k == "app_title" and "id" in cur:
+                    cur["title"] = v
+                elif k == "app_version" and "id" in cur:
+                    cur["version"] = v
+        if "id" in cur and "title" in cur:
+            apps.append(cur)
+        return apps
+    except Exception as e:
+        raise IPCError("Không thể đọc danh sách ứng dụng qua SDB: %s" % e)
+
+
+def launch_app(app_id):
+    sdb = get_tizensdb_path()
+    if not sdb:
+        # Fallback qua JSON-RPC directAccessControl
+        token, pin = credentials()
+        res, _ = rpc("directAccessControl", {"applicationName": app_id}, token=token, pin=pin)
+        return res
+    try:
+        out = subprocess.check_output([sdb, "launch", HOST, app_id], stderr=subprocess.STDOUT, text=True)
+        return out.strip()
+    except Exception as e:
+        raise IPCError("Không thể khởi chạy %s: %s" % (app_id, e))
+
+
 def get_full_status():
     token, pin = credentials()
     states, _ = rpc("getTVStates", token=token, pin=pin)
+    vstates = {}
+    try:
+        vstates, _ = rpc("getVideoStates", token=token, pin=pin)
+    except Exception:
+        pass
+
     backlight = get_backlight()
     game_mode = get_game_mode()
-    contrast = get_contrast()
-    sharpness = get_sharpness()
-    color = get_color()
-    tint = get_tint()
-    black_level = get_black_level()
+    contrast = int(vstates.get("contrast", 50)) if "contrast" in vstates else get_contrast()
+    sharpness = int(vstates.get("sharpness", 10)) if "sharpness" in vstates else get_sharpness()
+    color = int(vstates.get("color", 25)) if "color" in vstates else get_color()
+    tint = int(vstates.get("tint", 0)) if "tint" in vstates else get_tint()
+    black_level = int(vstates.get("brightness", 0)) if "brightness" in vstates else get_black_level()
     speaker_sel = get_speaker_select()
     peripherals = get_peripherals()
+
+    raw_pm = states.get("pictureMode", "Unknown")
+    friendly_pm = raw_pm
+    for name, code in [
+        ("sRGB", "Gen_327714"),
+        ("DCI-P3", "Gen_327713"),
+        ("Entertainment", "Gen_65541"),
+        ("Standard", "Gen_458753"),
+    ]:
+        if raw_pm == code:
+            friendly_pm = name
+            break
 
     return {
         "host": HOST,
@@ -446,7 +566,8 @@ def get_full_status():
         "mute": states.get("mute", "muteOff"),
         "speakerSelect": speaker_sel,
         "inputSource": states.get("inputSource", "Unknown"),
-        "pictureMode": states.get("pictureMode", "Unknown"),
+        "pictureMode": friendly_pm,
+        "pictureModeRaw": raw_pm,
         "pictureSize": states.get("pictureSize", "Unknown"),
         "peripherals": peripherals,
     }
@@ -556,7 +677,19 @@ def main():
 
     sub.add_parser("dev-mode", help="Gửi chuỗi phím 1-2-3-4-5 để mở popup Developer Mode")
 
-    # 8. Trạng thái & thông tin
+    # 8. Chế độ màu & Reverse-engineered Controls
+    p_pic = sub.add_parser("picture-mode", help="Đọc hoặc đặt chế độ màu / Picture Mode (sRGB, DCI-P3, Entertainment, Standard, Graphic)")
+    p_pic.add_argument("mode", nargs="?", help="sRGB, DCI-P3, Entertainment, Standard, Graphic, hoặc mã Gen_")
+
+    sub.add_parser("video-states", help="Đọc nhanh toàn bộ thông số hình ảnh trong 1 lệnh (getVideoStates)")
+    sub.add_parser("multiview", help="Đọc trạng thái MultiView (multiviewControl)")
+
+    # 9. Tizen SDB & Apps
+    sub.add_parser("apps", help="Liệt kê ứng dụng đã cài đặt trên Tizen (Chiaki, Stremio, YouTube...)")
+    p_launch = sub.add_parser("launch", help="Khởi chạy ứng dụng Tizen qua App ID")
+    p_launch.add_argument("app_id", help="App ID (ví dụ: ChIaKiTiZ0.ChiakiTizen, 3201907018807)")
+
+    # 10. Trạng thái & thông tin
     sub.add_parser("status", help="Đọc toàn bộ trạng thái màn hình (JSON)")
     sub.add_parser("info", help="Thông tin phần cứng màn hình")
 
@@ -644,8 +777,19 @@ def main():
                 print(set_input_source(args.source))
             else:
                 print(get_input_source())
-        elif args.cmd == "dev-mode":
-            print(trigger_dev_mode())
+        elif args.cmd == "picture-mode":
+            if args.mode:
+                print(set_picture_mode(args.mode))
+            else:
+                print(get_picture_mode())
+        elif args.cmd == "video-states":
+            print(json.dumps(get_video_states(), indent=2))
+        elif args.cmd == "multiview":
+            print(json.dumps(get_multiview(), indent=2))
+        elif args.cmd == "apps":
+            print(json.dumps(get_installed_apps(), indent=2, ensure_ascii=False))
+        elif args.cmd == "launch":
+            print(launch_app(args.app_id))
         elif args.cmd == "status":
             print(json.dumps(get_full_status(), indent=2, ensure_ascii=False))
         elif args.cmd == "info":

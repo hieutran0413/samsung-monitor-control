@@ -24,3 +24,8 @@ __pycache__/
 *.xcodeproj/
 *.xcworkspace/
 DerivedData/
+
+# Binaries & packages
+bin/
+*.wgt
+
