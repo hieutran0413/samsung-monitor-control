@@ -121,7 +121,19 @@ def connect(host, timeout):
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    return ctx.wrap_socket(socket.create_connection((host, PORT), timeout=timeout), server_hostname=host)
+    last_err = None
+    for attempt in range(2):
+        try:
+            return ctx.wrap_socket(socket.create_connection((host, PORT), timeout=timeout), server_hostname=host)
+        except OSError as e:
+            last_err = e
+            if attempt == 0 and e.errno in (65, 51, 60, 61):
+                import time
+                time.sleep(0.3)
+                continue
+            raise
+    if last_err:
+        raise last_err
 
 
 def rpc(method, params=None, token=None, pin=None, timeout=TIMEOUT, host=None):
