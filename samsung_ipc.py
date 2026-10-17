@@ -318,6 +318,98 @@ def set_input_source(source):
     return result.get("inputSource", source)
 
 
+def get_color():
+    token, pin = credentials()
+    result, _ = rpc("colorControl", token=token, pin=pin)
+    return int(result.get("color", 27))
+
+
+def set_color(value):
+    val = max(0, min(50, int(round(float(value)))))
+    token, pin = credentials()
+    result, _ = rpc("colorControl", {"color": val}, token=token, pin=pin)
+    return int(result.get("color", val))
+
+
+def get_tint():
+    token, pin = credentials()
+    result, _ = rpc("tintControl", token=token, pin=pin)
+    return int(result.get("tint", 0))
+
+
+def set_tint(value):
+    val = max(-15, min(15, int(round(float(value)))))
+    token, pin = credentials()
+    result, _ = rpc("tintControl", {"tint": val}, token=token, pin=pin)
+    return int(result.get("tint", val))
+
+
+def get_black_level():
+    token, pin = credentials()
+    result, _ = rpc("brightnessControl", token=token, pin=pin)
+    return int(result.get("brightness", 0))
+
+
+def set_black_level(value):
+    val = max(-5, min(5, int(round(float(value)))))
+    token, pin = credentials()
+    result, _ = rpc("brightnessControl", {"brightness": val}, token=token, pin=pin)
+    return int(result.get("brightness", val))
+
+
+def get_auto_motion_plus():
+    token, pin = credentials()
+    result, _ = rpc("autoMotionPlusControl", token=token, pin=pin)
+    return result.get("autoMotionPlus", "Off")
+
+
+def set_auto_motion_plus(mode):
+    norm = mode.strip().lower()
+    mapping = {"on": "On", "off": "Off", "auto": "Auto"}
+    target = mapping.get(norm, mode.capitalize())
+    token, pin = credentials()
+    result, _ = rpc("autoMotionPlusControl", {"autoMotionPlus": target}, token=token, pin=pin)
+    return result.get("autoMotionPlus", target)
+
+
+def get_speaker_select():
+    token, pin = credentials()
+    result, _ = rpc("speakerSelectControl", token=token, pin=pin)
+    return result.get("speakerSelect", "Internal")
+
+
+def set_speaker_select(target):
+    token, pin = credentials()
+    result, _ = rpc("speakerSelectControl", {"speakerSelect": target}, token=token, pin=pin)
+    return result.get("speakerSelect", target)
+
+
+def get_peripherals():
+    try:
+        out = subprocess.check_output(
+            ["ioreg", "-p", "IOUSB", "-l", "-w0"],
+            stderr=subprocess.DEVNULL
+        ).decode(errors="ignore")
+        items = out.split("+-o ")
+        devices = []
+        for item in items[1:]:
+            import re
+            name_m = re.match(r"([^<]+)", item)
+            name = name_m.group(1).strip() if name_m else "Thiết bị USB"
+            prod_m = re.search(r'"USB Product Name" = "([^"]+)"', item)
+            vendor_m = re.search(r'"USB Vendor Name" = "([^"]+)"', item)
+            prod_name = prod_m.group(1) if prod_m else name
+            vendor_name = vendor_m.group(1) if vendor_m else ""
+            if "Root Hub" not in prod_name and "AppleT6000" not in prod_name:
+                devices.append({
+                    "name": prod_name,
+                    "vendor": vendor_name
+                })
+        return devices
+    except Exception:
+        return []
+
+
 def get_full_status():
     token, pin = credentials()
     states, _ = rpc("getTVStates", token=token, pin=pin)
@@ -325,19 +417,29 @@ def get_full_status():
     game_mode = get_game_mode()
     contrast = get_contrast()
     sharpness = get_sharpness()
+    color = get_color()
+    tint = get_tint()
+    black_level = get_black_level()
+    speaker_sel = get_speaker_select()
+    peripherals = get_peripherals()
 
     return {
         "host": HOST,
         "backlight": backlight,
         "contrast": contrast,
         "sharpness": sharpness,
+        "color": color,
+        "tint": tint,
+        "blackLevel": black_level,
         "gameMode": game_mode,
         "soundMode": states.get("soundMode", "Unknown"),
         "volume": states.get("volume", 0),
         "mute": states.get("mute", "muteOff"),
+        "speakerSelect": speaker_sel,
         "inputSource": states.get("inputSource", "Unknown"),
         "pictureMode": states.get("pictureMode", "Unknown"),
         "pictureSize": states.get("pictureSize", "Unknown"),
+        "peripherals": peripherals,
     }
 
 
@@ -402,21 +504,36 @@ def main():
     p_sm = sub.add_parser("sound-mode", help="Đọc hoặc đặt chế độ âm thanh")
     p_sm.add_argument("mode", nargs="?", help="Chế độ âm thanh (Standard, Game, Music, Movie, Amplify, Adaptive, Optimized)")
 
-    # 5. Hình ảnh: Contrast & Sharpness
+    # 5. Hình ảnh: Contrast, Sharpness, Color, Tint, Black Level
     p_contrast = sub.add_parser("contrast", help="Đọc hoặc đặt độ tương phản (0-50)")
     p_contrast.add_argument("value", nargs="?", type=int, help="Độ tương phản 0-50")
 
     p_sharp = sub.add_parser("sharpness", help="Đọc hoặc đặt độ sắc nét (0-20)")
     p_sharp.add_argument("value", nargs="?", type=int, help="Độ sắc nét 0-20")
 
-    # 6. Âm thanh: Volume & Mute
+    p_color = sub.add_parser("color", help="Đọc hoặc đặt độ đậm màu / bão hòa (0-50)")
+    p_color.add_argument("value", nargs="?", type=int, help="Độ đậm màu 0-50 (chuẩn: 27)")
+
+    p_tint = sub.add_parser("tint", help="Đọc hoặc đặt sắc thái màu (-15..15)")
+    p_tint.add_argument("value", nargs="?", type=int, help="Sắc thái màu -15 đến 15 (chuẩn: 0)")
+
+    p_bl = sub.add_parser("black-level", help="Đọc hoặc đặt mức sáng điểm đen (-5..5)")
+    p_bl.add_argument("value", nargs="?", type=int, help="Mức điểm đen -5 đến 5 (chuẩn: 0)")
+
+    p_mp = sub.add_parser("motion-plus", help="Đọc hoặc bật/tắt Auto Motion Plus")
+    p_mp.add_argument("mode", nargs="?", choices=["on", "off", "auto"], help="Chế độ Motion Plus")
+
+    # 6. Âm thanh: Volume, Mute & Speaker Output
     p_vol = sub.add_parser("volume", help="Đọc hoặc đặt âm lượng (0-100)")
     p_vol.add_argument("value", nargs="?", type=int, help="Mức âm lượng 0-100")
 
     p_mute = sub.add_parser("mute", help="Đọc hoặc đặt tắt tiếng")
     p_mute.add_argument("action", nargs="?", choices=["on", "off", "toggle"], help="Trạng thái mute")
 
-    # 7. Nguồn & Phím remote
+    p_spk = sub.add_parser("speaker", help="Đọc hoặc chọn đầu ra âm thanh")
+    p_spk.add_argument("target", nargs="?", choices=["Internal", "Receiver", "internal", "receiver"], help="Internal hoặc Receiver")
+
+    # 7. Nguồn, Thiết bị ngoại vi & Phím remote
     p_power = sub.add_parser("power", help="Điều khiển nguồn màn hình")
     p_power.add_argument("action", nargs="?", choices=["on", "off", "reboot"], default="on", help="powerOn, powerOff, reboot")
 
@@ -425,6 +542,8 @@ def main():
 
     p_input = sub.add_parser("input", help="Đọc hoặc chuyển nguồn vào")
     p_input.add_argument("source", nargs="?", help="Tên nguồn (USB-C, HDMI1, HDMI2...)")
+
+    sub.add_parser("peripherals", help="Liệt kê thiết bị ngoại vi đang cắm qua USB Hub của màn hình")
 
     # 8. Trạng thái & thông tin
     sub.add_parser("status", help="Đọc toàn bộ trạng thái màn hình (JSON)")
@@ -467,6 +586,34 @@ def main():
                 print(set_sharpness(args.value))
             else:
                 print(get_sharpness())
+        elif args.cmd == "color":
+            if args.value is not None:
+                print(set_color(args.value))
+            else:
+                print(get_color())
+        elif args.cmd == "tint":
+            if args.value is not None:
+                print(set_tint(args.value))
+            else:
+                print(get_tint())
+        elif args.cmd == "black-level":
+            if args.value is not None:
+                print(set_black_level(args.value))
+            else:
+                print(get_black_level())
+        elif args.cmd == "motion-plus":
+            if args.mode:
+                print(set_auto_motion_plus(args.mode))
+            else:
+                print(get_auto_motion_plus())
+        elif args.cmd == "speaker":
+            if args.target:
+                target = "Receiver" if args.target.lower() == "receiver" else "Internal"
+                print(set_speaker_select(target))
+            else:
+                print(get_speaker_select())
+        elif args.cmd == "peripherals":
+            print(json.dumps(get_peripherals(), indent=2, ensure_ascii=False))
         elif args.cmd == "volume":
             if args.value is not None:
                 print(set_volume(args.value))
