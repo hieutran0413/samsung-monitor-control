@@ -30,7 +30,7 @@ class MonitorModel: ObservableObject {
     @Published var isMuted: Bool = false
     @Published var inputSource: String = "USB-C"
 
-    @Published var selectedTab: Int = 0 // 0: Hiển thị, 1: Game & Âm thanh, 2: Remote & Cài đặt
+    @Published var selectedTab: Int = 0 // 0: Hiển thị, 1: Âm thanh & Game, 2: Điều khiển
     @Published var isLoading: Bool = false
     @Published var isPairing: Bool = false
     @Published var statusMessage: String = ""
@@ -176,7 +176,7 @@ class MonitorModel: ObservableObject {
         runScriptAsync(args: ["sound-mode", val]) { [weak self] success, out in
             if success {
                 self?.soundMode = out
-                self?.statusMessage = "Chế độ âm thanh: \(out)"
+                self?.statusMessage = "Âm thanh: \(out)"
             } else {
                 self?.statusMessage = out
             }
@@ -203,7 +203,7 @@ class MonitorModel: ObservableObject {
                 self?.isMuted = (out == "muteOn")
                 self?.statusMessage = self?.isMuted == true ? "Đã tắt tiếng loa" : "Đã bật tiếng loa"
             } else {
-                self?.isMuted.toggle() // khôi phục
+                self?.isMuted.toggle()
                 self?.statusMessage = out
             }
         }
@@ -253,455 +253,408 @@ struct MonitorPopoverView: View {
     @State private var editIP: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Header
-            HStack(spacing: 8) {
-                Image(systemName: "display")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(.accentColor)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Samsung ViewFinity S9 (5K)")
-                        .font(.system(size: 13, weight: .bold))
-                    Text("\(model.inputSource) • \(model.monitorIP)")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
+        VStack(spacing: 12) {
+            // Header: Apple Native Style
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.15))
+                        .frame(width: 32, height: 32)
+                    Image(systemName: "display")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.accentColor)
                 }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Samsung ViewFinity S9")
+                        .font(.headline)
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 6, height: 6)
+                        Text("5K • \(model.inputSource) • \(model.monitorIP.isEmpty ? "Đang kết nối" : model.monitorIP)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
                 Spacer()
+
                 if model.isLoading || model.isPairing {
-                    ProgressView().scaleEffect(0.65)
+                    ProgressView()
+                        .scaleEffect(0.7)
                 } else {
-                    Button(action: {
+                    Button {
                         model.fetchAllStates()
-                    }) {
+                    } label: {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11))
+                            .font(.system(size: 12, weight: .medium))
                     }
                     .buttonStyle(.plain)
                     .foregroundColor(.secondary)
+                    .help("Làm mới trạng thái")
                 }
             }
+            .padding(.horizontal, 4)
+            .padding(.top, 4)
 
-            // Tab Switcher
-            HStack(spacing: 2) {
-                TabButton(title: "Hiển thị", icon: "sun.max.fill", index: 0, selectedIndex: $model.selectedTab)
-                TabButton(title: "Game & Âm thanh", icon: "gamecontroller.fill", index: 1, selectedIndex: $model.selectedTab)
-                TabButton(title: "Điều khiển", icon: "slider.horizontal.3", index: 2, selectedIndex: $model.selectedTab)
+            // Native Apple Segmented Picker
+            Picker("Chế độ", selection: $model.selectedTab) {
+                Label("Hiển thị", systemImage: "sun.max.fill").tag(0)
+                Label("Âm thanh & Game", systemImage: "gamecontroller.fill").tag(1)
+                Label("Điều khiển", systemImage: "slider.horizontal.3").tag(2)
             }
-            .padding(2)
-            .background(Color.gray.opacity(0.12))
-            .cornerRadius(8)
+            .pickerStyle(.segmented)
 
-            Divider()
-
-            // Nội dung theo Tab
+            // Tab Content
             if model.selectedTab == 0 {
-                // TAB 1: HIỂN THỊ (DISPLAY)
-                VStack(alignment: .leading, spacing: 10) {
-                    // Đèn nền Backlight
-                    HStack {
-                        Text("Độ sáng đèn nền:")
-                            .font(.system(size: 11, weight: .medium))
-                        Spacer()
-                        Text("\(Int(model.brightness)) / 50")
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    }
+                // TAB 0: HIỂN THỊ (DISPLAY)
+                VStack(spacing: 12) {
+                    // Backlight Card
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Label("Đèn nền (Hardware Backlight)", systemImage: "sun.max.fill")
+                                    .font(.subheadline.weight(.semibold))
+                                Spacer()
+                                Text("\(Int(model.brightness)) / 50")
+                                    .font(.subheadline.weight(.bold).monospacedDigit())
+                                    .foregroundColor(.accentColor)
+                            }
 
-                    HStack(spacing: 8) {
-                        Image(systemName: "sun.min")
-                            .foregroundColor(.secondary)
-                            .font(.system(size: 11))
-                        Slider(
-                            value: Binding(
-                                get: { model.brightness },
-                                set: { model.setBrightness(to: $0) }
-                            ),
-                            in: 0...50,
-                            step: 1
-                        )
-                        Image(systemName: "sun.max.fill")
-                            .foregroundColor(.secondary)
-                            .font(.system(size: 12))
-                    }
+                            HStack(spacing: 8) {
+                                Image(systemName: "sun.min")
+                                    .foregroundColor(.secondary)
+                                    .font(.caption)
 
-                    // Nút chọn nhanh Presets
-                    HStack(spacing: 5) {
-                        PresetButton(title: "10", subtitle: "Tối", value: 10, currentVal: model.brightness) {
-                            model.setBrightness(to: 10)
+                                Slider(
+                                    value: Binding(
+                                        get: { model.brightness },
+                                        set: { model.setBrightness(to: $0) }
+                                    ),
+                                    in: 0...50,
+                                    step: 1
+                                )
+
+                                Image(systemName: "sun.max.fill")
+                                    .foregroundColor(.secondary)
+                                    .font(.caption)
+                            }
+
+                            // Native Segmented Preset Selector
+                            Picker("Mức chọn nhanh", selection: Binding(
+                                get: { Int(model.brightness) },
+                                set: { model.setBrightness(to: Double($0)) }
+                            )) {
+                                Text("10 • Tối").tag(10)
+                                Text("25 • Vừa").tag(25)
+                                Text("40 • Sáng").tag(40)
+                                Text("50 • Max").tag(50)
+                            }
+                            .pickerStyle(.segmented)
                         }
-                        PresetButton(title: "25", subtitle: "Vừa", value: 25, currentVal: model.brightness) {
-                            model.setBrightness(to: 25)
-                        }
-                        PresetButton(title: "40", subtitle: "Sáng", value: 40, currentVal: model.brightness) {
-                            model.setBrightness(to: 40)
-                        }
-                        PresetButton(title: "50", subtitle: "Tối đa", value: 50, currentVal: model.brightness) {
-                            model.setBrightness(to: 50)
-                        }
+                        .padding(4)
                     }
 
-                    Divider().padding(.vertical, 2)
+                    // Contrast & Sharpness Card
+                    GroupBox {
+                        VStack(spacing: 10) {
+                            // Contrast
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Label("Độ tương phản (Contrast)", systemImage: "circle.lefthalf.filled")
+                                        .font(.caption.weight(.medium))
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                    Text("\(Int(model.contrast))")
+                                        .font(.caption.weight(.semibold).monospacedDigit())
+                                }
+                                Slider(
+                                    value: Binding(
+                                        get: { model.contrast },
+                                        set: { model.setContrast(to: $0) }
+                                    ),
+                                    in: 0...50,
+                                    step: 1
+                                )
+                            }
 
-                    // Độ tương phản (Contrast)
-                    HStack {
-                        Text("Độ tương phản:")
-                            .font(.system(size: 11, weight: .medium))
-                        Spacer()
-                        Text("\(Int(model.contrast)) / 50")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    }
-                    Slider(
-                        value: Binding(
-                            get: { model.contrast },
-                            set: { model.setContrast(to: $0) }
-                        ),
-                        in: 0...50,
-                        step: 1
-                    )
+                            Divider()
 
-                    // Độ sắc nét (Sharpness)
-                    HStack {
-                        Text("Độ sắc nét:")
-                            .font(.system(size: 11, weight: .medium))
-                        Spacer()
-                        Text("\(Int(model.sharpness)) / 20")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            // Sharpness
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Label("Độ sắc nét (Sharpness)", systemImage: "aqi.medium")
+                                        .font(.caption.weight(.medium))
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                    Text("\(Int(model.sharpness))")
+                                        .font(.caption.weight(.semibold).monospacedDigit())
+                                }
+                                Slider(
+                                    value: Binding(
+                                        get: { model.sharpness },
+                                        set: { model.setSharpness(to: $0) }
+                                    ),
+                                    in: 0...20,
+                                    step: 1
+                                )
+                            }
+                        }
+                        .padding(4)
                     }
-                    Slider(
-                        value: Binding(
-                            get: { model.sharpness },
-                            set: { model.setSharpness(to: $0) }
-                        ),
-                        in: 0...20,
-                        step: 1
-                    )
                 }
             } else if model.selectedTab == 1 {
-                // TAB 2: GAME MODE & ÂM THANH
-                VStack(alignment: .leading, spacing: 10) {
-                    // Game Mode Toggle
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack {
-                            Text("Game Mode (Low Latency):")
-                                .font(.system(size: 11, weight: .medium))
-                            Spacer()
-                            Text(model.gameMode == "On" ? "⚡ ĐANG BẬT" : (model.gameMode == "Off" ? "🎨 ĐANG TẮT" : "🔄 AUTO"))
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(model.gameMode == "On" ? .green : .secondary)
-                        }
+                // TAB 1: GAME & AUDIO
+                VStack(spacing: 12) {
+                    // Game Mode GroupBox
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Label("Game Mode (Low Latency)", systemImage: "bolt.fill")
+                                    .font(.subheadline.weight(.semibold))
+                                Spacer()
+                                Text(model.gameMode == "On" ? "ĐANG BẬT" : (model.gameMode == "Off" ? "ĐANG TẮT" : "AUTO"))
+                                    .font(.caption.weight(.bold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(model.gameMode == "On" ? Color.green.opacity(0.18) : Color.gray.opacity(0.18))
+                                    .foregroundColor(model.gameMode == "On" ? .green : .secondary)
+                                    .cornerRadius(4)
+                            }
 
-                        HStack(spacing: 6) {
-                            GameModeButton(title: "Bật (Low Latency)", mode: "On", currentMode: model.gameMode) {
-                                model.setGameMode(to: "On")
+                            Picker("Game Mode", selection: Binding(
+                                get: { model.gameMode },
+                                set: { model.setGameMode(to: $0) }
+                            )) {
+                                Text("Bật (Low Latency)").tag("On")
+                                Text("Tắt (Chuẩn màu)").tag("Off")
+                                Text("Tự động").tag("Auto")
                             }
-                            GameModeButton(title: "Tắt (Chuẩn màu)", mode: "Off", currentMode: model.gameMode) {
-                                model.setGameMode(to: "Off")
-                            }
-                            GameModeButton(title: "Tự động", mode: "Auto", currentMode: model.gameMode) {
-                                model.setGameMode(to: "Auto")
-                            }
+                            .pickerStyle(.segmented)
+
+                            Text(model.gameMode == "On"
+                                 ? "⚡ Đang ngắt bộ lọc hình ảnh để đạt độ trễ tối thiểu khi chơi game."
+                                 : "🎨 Đang giữ nguyên đầy đủ bộ lọc màu và độ tương phản chuẩn đồ họa.")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
                         }
+                        .padding(4)
                     }
 
-                    Divider().padding(.vertical, 2)
+                    // Audio GroupBox
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 10) {
+                            // Sound profile popup menu
+                            HStack {
+                                Label("Chế độ âm thanh:", systemImage: "speaker.wave.3")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Picker("", selection: Binding(
+                                    get: { model.soundMode },
+                                    set: { model.setSoundMode(to: $0) }
+                                )) {
+                                    Text("Standard (Chuẩn)").tag("Standard")
+                                    Text("Game (Vòm)").tag("Game")
+                                    Text("Music (Nhạc)").tag("Music")
+                                    Text("Movie (Phim)").tag("Movie")
+                                    Text("Amplify (Thoại)").tag("Amplify")
+                                    Text("Adaptive (Tự thích ứng)").tag("Adaptive")
+                                }
+                                .pickerStyle(.menu)
+                                .frame(width: 155)
+                            }
 
-                    // Chế độ Âm thanh
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Chế độ âm thanh:")
-                            .font(.system(size: 11, weight: .medium))
+                            Divider()
 
-                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 5) {
-                            ForEach(["Standard", "Game", "Music", "Movie", "Amplify", "Adaptive"], id: \.self) { sm in
-                                SoundModePill(title: sm, current: model.soundMode) {
-                                    model.setSoundMode(to: sm)
+                            // Volume & Mute
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Label("Âm lượng loa màn hình:", systemImage: "speaker.wave.2")
+                                        .font(.caption.weight(.medium))
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                    Text("\(Int(model.volume))%")
+                                        .font(.caption.weight(.semibold).monospacedDigit())
+                                }
+
+                                HStack(spacing: 8) {
+                                    Button {
+                                        model.toggleMute()
+                                    } label: {
+                                        Image(systemName: model.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                                            .foregroundColor(model.isMuted ? .red : .primary)
+                                            .font(.system(size: 13))
+                                            .frame(width: 22)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help(model.isMuted ? "Bật tiếng" : "Tắt tiếng")
+
+                                    Slider(
+                                        value: Binding(
+                                            get: { model.volume },
+                                            set: { model.setVolume(to: $0) }
+                                        ),
+                                        in: 0...100,
+                                        step: 1
+                                    )
                                 }
                             }
                         }
-                    }
-
-                    Divider().padding(.vertical, 2)
-
-                    // Âm lượng loa màn hình
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text("Âm lượng loa màn hình:")
-                                .font(.system(size: 11, weight: .medium))
-                            Spacer()
-                            Text("\(Int(model.volume))%")
-                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        }
-
-                        HStack(spacing: 8) {
-                            Button(action: {
-                                model.toggleMute()
-                            }) {
-                                Image(systemName: model.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                                    .foregroundColor(model.isMuted ? .red : .primary)
-                                    .font(.system(size: 12))
-                            }
-                            .buttonStyle(.plain)
-
-                            Slider(
-                                value: Binding(
-                                    get: { model.volume },
-                                    set: { model.setVolume(to: $0) }
-                                ),
-                                in: 0...100,
-                                step: 1
-                            )
-                        }
+                        .padding(4)
                     }
                 }
             } else {
-                // TAB 3: ĐIỀU KHIỂN & CÀI ĐẶT
-                VStack(alignment: .leading, spacing: 10) {
-                    // Phím Remote giả lập
-                    Text("Phím điều khiển nhanh:")
-                        .font(.system(size: 11, weight: .medium))
-
-                    HStack(spacing: 6) {
-                        RemoteButton(title: "Menu", icon: "list.bullet") { model.sendKey("menu") }
-                        RemoteButton(title: "Home", icon: "house.fill") { model.sendKey("firstScreen") }
-                        RemoteButton(title: "Return", icon: "arrow.uturn.backward") { model.sendKey("return") }
-                        RemoteButton(title: "Enter", icon: "checkmark.circle.fill") { model.sendKey("enter") }
-                    }
-
-                    // Phím điều hướng
-                    HStack(spacing: 6) {
-                        Spacer()
-                        RemoteButton(title: "▲", icon: "") { model.sendKey("cursorUp") }
-                        Spacer()
-                    }
-                    HStack(spacing: 6) {
-                        RemoteButton(title: "◀", icon: "") { model.sendKey("cursorLeft") }
-                        RemoteButton(title: "OK", icon: "") { model.sendKey("enter") }
-                        RemoteButton(title: "▶", icon: "") { model.sendKey("cursorRight") }
-                    }
-                    HStack(spacing: 6) {
-                        Spacer()
-                        RemoteButton(title: "▼", icon: "") { model.sendKey("cursorDn") }
-                        Spacer()
-                    }
-
-                    Divider().padding(.vertical, 2)
-
-                    // Quản lý nguồn & Ghép nối
-                    HStack(spacing: 8) {
-                        Button(action: {
-                            model.pairMonitor()
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "key.fill")
-                                Text(model.isPairing ? "Đang chờ Allow..." : "Cấp quyền / Ghép nối lại")
-                            }
-                            .font(.system(size: 10.5, weight: .medium))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 5)
-                            .background(Color.accentColor.opacity(0.18))
-                            .cornerRadius(6)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(model.isPairing)
-
-                        Button(action: {
-                            model.showSettings.toggle()
-                            editIP = model.monitorIP
-                        }) {
-                            Image(systemName: "gearshape")
-                                .font(.system(size: 12))
-                                .padding(5)
-                                .background(Color.gray.opacity(0.12))
-                                .cornerRadius(6)
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    if model.showSettings {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Đổi địa chỉ IP màn hình:")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(.secondary)
-                            HStack(spacing: 6) {
-                                TextField("192.168.x.x", text: $editIP)
-                                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                                    .font(.system(size: 11, design: .monospaced))
-                                Button("Lưu & Pair") {
-                                    model.monitorIP = editIP
-                                    model.showSettings = false
-                                    model.pairMonitor(targetHost: editIP)
+                // TAB 2: REMOTE & SYSTEM
+                VStack(spacing: 12) {
+                    // Remote D-Pad GroupBox
+                    GroupBox {
+                        VStack(spacing: 8) {
+                            // Function Keys row
+                            ControlGroup {
+                                Button { model.sendKey("menu") } label: {
+                                    Label("Menu", systemImage: "list.bullet")
                                 }
-                                .font(.system(size: 11))
+                                Button { model.sendKey("firstScreen") } label: {
+                                    Label("Home", systemImage: "house")
+                                }
+                                Button { model.sendKey("return") } label: {
+                                    Label("Return", systemImage: "arrow.uturn.backward")
+                                }
+                            }
+
+                            // Directional Navigation
+                            VStack(spacing: 4) {
+                                Button { model.sendKey("cursorUp") } label: {
+                                    Image(systemName: "chevron.up")
+                                        .frame(width: 38, height: 26)
+                                }
+                                .buttonStyle(.bordered)
+
+                                HStack(spacing: 8) {
+                                    Button { model.sendKey("cursorLeft") } label: {
+                                        Image(systemName: "chevron.left")
+                                            .frame(width: 32, height: 26)
+                                    }
+                                    .buttonStyle(.bordered)
+
+                                    Button { model.sendKey("enter") } label: {
+                                        Text("OK")
+                                            .font(.caption.weight(.bold))
+                                            .frame(width: 38, height: 26)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+
+                                    Button { model.sendKey("cursorRight") } label: {
+                                        Image(systemName: "chevron.right")
+                                            .frame(width: 32, height: 26)
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+
+                                Button { model.sendKey("cursorDn") } label: {
+                                    Image(systemName: "chevron.down")
+                                        .frame(width: 38, height: 26)
+                                }
+                                .buttonStyle(.bordered)
                             }
                         }
-                        .padding(8)
-                        .background(Color.gray.opacity(0.08))
-                        .cornerRadius(8)
+                        .padding(4)
+                        .frame(maxWidth: .infinity)
+                    }
+
+                    // Settings & Pairing GroupBox
+                    GroupBox {
+                        VStack(spacing: 8) {
+                            HStack {
+                                Button {
+                                    model.pairMonitor()
+                                } label: {
+                                    Label(model.isPairing ? "Đang chờ bấm Allow..." : "Ghép nối lại (Pair)", systemImage: "key.fill")
+                                        .font(.caption)
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(model.isPairing)
+
+                                Spacer()
+
+                                Button {
+                                    model.showSettings.toggle()
+                                    editIP = model.monitorIP
+                                } label: {
+                                    Label("Đổi IP", systemImage: "gearshape")
+                                        .font(.caption)
+                                }
+                                .buttonStyle(.bordered)
+                            }
+
+                            if model.showSettings {
+                                HStack(spacing: 6) {
+                                    TextField("192.168.x.x", text: $editIP)
+                                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                                        .font(.caption.monospaced())
+                                    Button("Lưu & Pair") {
+                                        model.monitorIP = editIP
+                                        model.showSettings = false
+                                        model.pairMonitor(targetHost: editIP)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .font(.caption)
+                                }
+                                .padding(.top, 4)
+                            }
+                        }
+                        .padding(4)
                     }
                 }
             }
 
-            // Thông báo trạng thái
+            // Status message toast
             if !model.statusMessage.isEmpty {
-                Text(model.statusMessage)
-                    .font(.system(size: 10))
-                    .foregroundColor(model.statusMessage.contains("Lỗi") ? .red : .secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.gray.opacity(0.06))
-                    .cornerRadius(4)
+                HStack(spacing: 6) {
+                    Image(systemName: model.statusMessage.contains("Lỗi") ? "exclamationmark.triangle.fill" : "info.circle.fill")
+                        .font(.caption)
+                        .foregroundColor(model.statusMessage.contains("Lỗi") ? .red : .accentColor)
+                    Text(model.statusMessage)
+                        .font(.caption2)
+                        .foregroundColor(model.statusMessage.contains("Lỗi") ? .red : .primary)
+                    Spacer()
+                }
+                .padding(6)
+                .background(Color.secondary.opacity(0.08))
+                .cornerRadius(6)
             }
 
             Divider()
 
             // Footer
             HStack {
-                Button(action: {
+                Button {
                     model.setPower("powerOff")
-                }) {
+                } label: {
                     Label("Tắt màn hình", systemImage: "power")
-                        .font(.system(size: 10.5))
-                        .foregroundColor(.red.opacity(0.85))
+                        .font(.caption)
+                        .foregroundColor(.red.opacity(0.9))
                 }
                 .buttonStyle(.plain)
 
                 Spacer()
 
-                Button(action: {
+                Button {
                     NSApplication.shared.terminate(nil)
-                }) {
+                } label: {
                     Text("Thoát")
-                        .font(.system(size: 10.5))
+                        .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
             }
+            .padding(.horizontal, 4)
+            .padding(.bottom, 2)
         }
-        .padding(13)
-        .frame(width: 325)
-    }
-}
-
-struct TabButton: View {
-    let title: String
-    let icon: String
-    let index: Int
-    @Binding var selectedIndex: Int
-
-    var isSelected: Bool { selectedIndex == index }
-
-    var body: some View {
-        Button(action: {
-            selectedIndex = index
-        }) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 10))
-                Text(title)
-                    .font(.system(size: 10.5, weight: isSelected ? .bold : .medium))
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 5)
-            .background(isSelected ? Color.accentColor : Color.clear)
-            .foregroundColor(isSelected ? .white : .primary)
-            .cornerRadius(6)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct GameModeButton: View {
-    let title: String
-    let mode: String
-    let currentMode: String
-    let action: () -> Void
-
-    var isSelected: Bool { currentMode.lowercased() == mode.lowercased() }
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 10, weight: isSelected ? .bold : .regular))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 6)
-                .background(isSelected ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.12))
-                .foregroundColor(isSelected ? .accentColor : .primary)
-                .cornerRadius(6)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct SoundModePill: View {
-    let title: String
-    let current: String
-    let action: () -> Void
-
-    var isSelected: Bool { current.lowercased() == title.lowercased() }
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 10, weight: isSelected ? .bold : .regular))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 5)
-                .background(isSelected ? Color.accentColor : Color.gray.opacity(0.12))
-                .foregroundColor(isSelected ? .white : .primary)
-                .cornerRadius(5)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct RemoteButton: View {
-    let title: String
-    let icon: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 3) {
-                if !icon.isEmpty {
-                    Image(systemName: icon)
-                        .font(.system(size: 10))
-                }
-                Text(title)
-                    .font(.system(size: 10, weight: .medium))
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 5)
-            .background(Color.gray.opacity(0.12))
-            .cornerRadius(5)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-struct PresetButton: View {
-    let title: String
-    let subtitle: String
-    let value: Double
-    let currentVal: Double
-    let action: () -> Void
-
-    var isSelected: Bool {
-        Int(currentVal) == Int(value)
-    }
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 1) {
-                Text(title)
-                    .font(.system(size: 11, weight: .bold))
-                Text(subtitle)
-                    .font(.system(size: 8.5))
-                    .foregroundColor(.secondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-            .background(isSelected ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.12))
-            .cornerRadius(5)
-        }
-        .buttonStyle(.plain)
+        .padding(14)
+        .frame(width: 340)
     }
 }
 
@@ -719,7 +672,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 325, height: 350)
+        popover.contentSize = NSSize(width: 340, height: 420)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: MonitorPopoverView())
 
