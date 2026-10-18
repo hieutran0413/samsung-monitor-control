@@ -3,6 +3,8 @@
 > **Tài liệu Định hướng & Phạm vi Sản phẩm (Product Brief)**  
 > Chuẩn hóa theo tiêu chuẩn dự án của `init-product-project`.
 
+> **Cập nhật phạm vi 2026-10-18:** [Product Design](../design/PRODUCT_DESIGN.md) là nguồn quyết định hiện hành cho UI/UX và phạm vi essential. Samsung vẫn là trọng tâm; DDC mở rộng độ sáng, âm lượng và logical disconnect/reconnect, không chỉnh màu DDC. Tài liệu brief phía dưới giữ bối cảnh ban đầu; các non-goal cũ về âm lượng/DDC và tuyên bố 0% CPU/độ chính xác màu/khả năng firmware chưa đo không phải acceptance hiện tại. Coding đang dừng theo yêu cầu người dùng để review design trước.
+
 ---
 
 ## 1. Bối cảnh & Vấn đề Cốt lõi (Problem Statement)
@@ -34,8 +36,8 @@
 
 ### B. Những gì nằm ngoài phạm vi (Non-Goals)
 - Không can thiệp sâu vào kernel macOS (không cài kext, không tắt SIP).
-- Không can thiệp vào chỉnh âm lượng Tizen (loa ngoài hoặc tai nghe đã được macOS quản lý qua audio endpoint).
-- Không hỗ trợ các màn hình không có hệ điều hành Tizen / IP Control.
+- Không mở rộng quản lý mọi audio endpoint của macOS; âm lượng Samsung và DDC được hỗ trợ theo capability trong Product Design.
+- Không mở rộng thành bộ tính năng đầy đủ của BetterDisplay: DDC chỉ brightness/volume/disconnect/reconnect, không màu, scaling, virtual screen hoặc HDR boost.
 
 ---
 

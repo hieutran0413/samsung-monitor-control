@@ -86,11 +86,11 @@ Samsung trang bị giao thức chuyên nghiệp **Samsung IP Control G2** trên 
 - Xem chi tiết: [Hướng dẫn cấu hình BetterDisplay](docs/guides/BETTERDISPLAY_INTEGRATION.md).
 
 ### Phương án 2: Ứng dụng Menu Bar macOS (Native Swift + SwiftUI)
-- Menu Bar icon mặt trời siêu nhẹ, tiêu tốn 0% CPU khi chạy nền.
-- Giao diện chia 3 Tab chuyên nghiệp:
-  1. **Hiển thị:** Thanh trượt Đèn nền (Backlight 0–50), 4 nút chọn nhanh (10, 25, 40, 50), Độ tương phản (Contrast 0–50), Độ nét (Sharpness 0–20).
-  2. **Game & Âm thanh:** Bật/Tắt Game Mode (Low Latency) 1 chạm (`On` / `Off` / `Auto`), 6 Profile âm thanh (`Standard`, `Game`, `Music`, `Movie`, `Amplify`, `Adaptive`), Thanh trượt âm lượng loa màn hình (0–100) và nút Mute.
-  3. **Điều khiển & Cài đặt:** Phím Remote D-Pad ảo (Lên, Xuống, Trái, Phải, Enter, Return, Menu, Home), Nút Tắt màn hình (`powerOff`), Ghép nối lại và đổi IP.
+- Ứng dụng menu bar native AppKit + SwiftUI, dùng Button, Slider, Picker, TabView và GroupBox hệ thống.
+- Nút **Tắt màn hình** nằm cố định ở header, gửi `power off` đúng hợp đồng CLI; có trạng thái chờ và chống bấm lặp.
+- Bốn tab: **Nhanh** (đèn nền/âm lượng), **Hình ảnh** (profile/Game Mode/chỉnh màu), **Remote**, **Kết nối** (pairing/IP/nguồn vào/USB).
+- Shortcut remote chỉ hoạt động trong app, ở tab Remote sau khi bật chế độ bàn phím; không nhận phím từ app khác.
+- Bản 2026-10-18 đã build/cài và qua test hợp đồng power bằng mock; nghiệm thu UI và tắt màn hình vật lý còn mở. [Audit và giới hạn kiểm chứng](docs/audits/2026-10-18-native-ui/AUDIT.md).
 - Xem chi tiết: [Hướng dẫn Standalone Mac App](docs/guides/STANDALONE_MAC_APP.md).
 
 ### Phương án 3: Python CLI Đa Năng

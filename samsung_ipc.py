@@ -33,6 +33,7 @@ import socket
 import ssl
 import subprocess
 import sys
+import time
 
 CONFIG_FILE      = os.path.expanduser("~/.samsung_monitor_control.json")
 PORT             = 1516
@@ -268,6 +269,27 @@ def set_sharpness(value):
     return int(result.get("sharpness", val))
 
 
+def refresh_sharpness(target):
+    """Nudge one step, always attempt restoration, then verify the saved target."""
+    target = int(target)
+    if not 0 <= target <= 20:
+        raise IPCError("Độ nét phải nằm trong khoảng 0–20")
+    temporary = target - 1 if target > 0 else 1
+    try:
+        set_sharpness(temporary)
+        time.sleep(0.15)
+    finally:
+        # Also restore after a timeout: the monitor may have applied the first write.
+        try:
+            set_sharpness(target)
+        except Exception as exc:
+            raise IPCError("Không khôi phục được độ nét về %s. Hãy đặt lại mức này khi kết nối trở lại: %s" % (target, exc)) from exc
+    actual = get_sharpness()
+    if actual != target:
+        raise IPCError("Chưa xác nhận độ nét %s; màn hình đang trả %s. Hãy thử lại." % (target, actual))
+    return actual
+
+
 def get_volume():
     token, pin = credentials()
     result, _ = rpc("directVolumeControl", token=token, pin=pin)
@@ -431,51 +453,54 @@ def get_peripherals():
         return []
 
 
-PICTURE_MODES = {
-    "dci-p3": "Gen_327712",
-    "p3": "Gen_327712",
+# ViewFinity S9: sRGB/P3 labels calibrated against the monitor OSD.
+# Keep read/write labels in this single table; Gen_* values are firmware presets.
+PICTURE_MODE_LABELS = {
+    "Gen_327712": "sRGB",
+    "Gen_327713": "BT.709",
+    "Gen_327714": "DCI-P3",
+    "Gen_327715": "DICOM",
+    "Gen_327716": "Custom",
+    "Gen_65541": "Entertainment",
+    "Gen_458753": "Standard",
+}
+PICTURE_MODES = {label.lower(): code for code, label in PICTURE_MODE_LABELS.items()}
+PICTURE_MODES.update({
+    "p3": "Gen_327714",
     "bt709": "Gen_327713",
     "bt-709": "Gen_327713",
-    "bt.709": "Gen_327713",
-    "srgb": "Gen_327714",
-    "graphic": "Gen_327714",
-    "dicom": "Gen_327715",
-    "custom": "Gen_327716",
-    "entertainment": "Gen_65541",
-    "standard": "Gen_458753",
+    "graphic": "Gen_327714",  # Legacy CLI alias; not an OSD label.
     "preset1": "Gen_327712",
     "preset2": "Gen_327713",
     "preset3": "Gen_327714",
     "preset4": "Gen_327715",
     "preset5": "Gen_327716",
-}
+})
+
+
+def picture_mode_label(raw):
+    return PICTURE_MODE_LABELS.get(raw, raw)
 
 
 def get_picture_mode():
     token, pin = credentials()
     states, _ = rpc("getTVStates", token=token, pin=pin)
     raw = states.get("pictureMode", "Unknown")
-    for name, code in [
-        ("DCI-P3", "Gen_327712"),
-        ("BT.709", "Gen_327713"),
-        ("sRGB", "Gen_327714"),
-        ("DICOM", "Gen_327715"),
-        ("Custom", "Gen_327716"),
-        ("Entertainment", "Gen_65541"),
-        ("Standard", "Gen_458753"),
-        ("Graphic", "Gen_327714"),
-    ]:
-        if raw == code:
-            return f"{name} ({raw})"
-    return raw
+    label = picture_mode_label(raw)
+    return f"{label} ({raw})" if label != raw else raw
 
 
 def set_picture_mode(mode):
     token, pin = credentials()
     norm = mode.strip().lower()
     target = PICTURE_MODES.get(norm, mode)
-    result, _ = rpc("pictureModeControl", {"pictureMode": target}, token=token, pin=pin)
-    return result.get("pictureMode", target)
+    rpc("pictureModeControl", {"pictureMode": target}, token=token, pin=pin)
+    # A write response may echo the requested mode. Read the actual state instead.
+    states, _ = rpc("getTVStates", token=token, pin=pin)
+    actual = states.get("pictureMode")
+    if actual != target:
+        raise IPCError("Chưa xác nhận chế độ hình ảnh: yêu cầu %s, màn hình trả %s. Hãy làm mới trạng thái." % (target, actual or "Unknown"))
+    return actual
 
 
 def get_video_states():
@@ -562,19 +587,7 @@ def get_full_status():
     peripherals = get_peripherals()
 
     raw_pm = states.get("pictureMode", "Unknown")
-    friendly_pm = raw_pm
-    for name, code in [
-        ("DCI-P3", "Gen_327712"),
-        ("BT.709", "Gen_327713"),
-        ("sRGB", "Gen_327714"),
-        ("DICOM", "Gen_327715"),
-        ("Custom", "Gen_327716"),
-        ("Entertainment", "Gen_65541"),
-        ("Standard", "Gen_458753"),
-    ]:
-        if raw_pm == code:
-            friendly_pm = name
-            break
+    friendly_pm = picture_mode_label(raw_pm)
 
     return {
         "host": HOST,
@@ -665,6 +678,9 @@ def main():
     p_sharp = sub.add_parser("sharpness", help="Đọc hoặc đặt độ sắc nét (0-20)")
     p_sharp.add_argument("value", nargs="?", type=int, help="Độ sắc nét 0-20")
 
+    p_refresh = sub.add_parser("refresh-sharpness", help="Chỉnh lệch độ nét 1 mức rồi khôi phục")
+    p_refresh.add_argument("value", type=int, choices=range(21), metavar="0..20", help="Mức độ nét cần giữ")
+
     p_color = sub.add_parser("color", help="Đọc hoặc đặt độ đậm màu / bão hòa (0-50)")
     p_color.add_argument("value", nargs="?", type=int, help="Độ đậm màu 0-50 (chuẩn: 27)")
 
@@ -754,6 +770,8 @@ def main():
                 print(set_sharpness(args.value))
             else:
                 print(get_sharpness())
+        elif args.cmd == "refresh-sharpness":
+            print(refresh_sharpness(args.value))
         elif args.cmd == "color":
             if args.value is not None:
                 print(set_color(args.value))

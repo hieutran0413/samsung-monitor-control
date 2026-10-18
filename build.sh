@@ -7,6 +7,10 @@ CONTENTS_DIR="${BUNDLE_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 TARGET_APP_DIR="/Applications/${BUNDLE_DIR}"
+# Stable development signing keeps the designated requirement consistent across builds (TCC/AX).
+# Explicit override remains available for other machines; ad-hoc is a development fallback only.
+SIGNING_IDENTITY="${CODE_SIGN_IDENTITY:-$(security find-identity -v -p codesigning | awk '/Apple Development/ && !/REVOKED/ {print $2; exit}')}"
+SIGNING_IDENTITY="${SIGNING_IDENTITY:--}"
 
 echo "==> 1. Dừng ứng dụng cũ nếu đang chạy..."
 killall "${APP_NAME}" 2>/dev/null || true
@@ -49,10 +53,14 @@ cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
 EOF
 
 echo "==> 5. Biên dịch mã nguồn Swift thành ứng dụng native..."
-swiftc -O main.swift -o "${MACOS_DIR}/${APP_NAME}" -framework Cocoa -framework SwiftUI
+make -C vendor/m1ddc
+cp vendor/m1ddc/m1ddc "${RESOURCES_DIR}/m1ddc"
+cp vendor/m1ddc/LICENSE "${RESOURCES_DIR}/m1ddc-LICENSE"
+codesign --force --sign "$SIGNING_IDENTITY" "${RESOURCES_DIR}/m1ddc"
+swiftc -O main.swift DisplayControl.swift PrivateControlCenterGlass.swift -o "${MACOS_DIR}/${APP_NAME}" -framework Cocoa -framework SwiftUI
 
-echo "==> 6. Ký số Ad-hoc để macOS cấp quyền mạng nội bộ..."
-codesign --force --deep --sign - "${BUNDLE_DIR}"
+echo "==> 6. Ký ứng dụng bằng identity ổn định..."
+codesign --force --deep --sign "$SIGNING_IDENTITY" "${BUNDLE_DIR}"
 
 echo "==> 7. Cài đặt vào /Applications..."
 rm -rf "${TARGET_APP_DIR}"

@@ -1,5 +1,6 @@
 import Cocoa
 import SwiftUI
+import ServiceManagement
 
 func getScriptPath() -> String {
     if let bundlePath = Bundle.main.path(forResource: "samsung_ipc", ofType: "py") {
@@ -34,7 +35,8 @@ class MonitorModel: ObservableObject {
     @Published var tint: Double = 0.0
     @Published var blackLevel: Double = 0.0
     @Published var gameMode: String = "On"
-    @Published var pictureMode: String = "sRGB"
+    @Published var pictureMode: String = "Unknown"
+    @Published var isPictureModeBusy = false
     @Published var soundMode: String = "Standard"
     @Published var volume: Double = 50.0
     @Published var isMuted: Bool = false
@@ -42,13 +44,21 @@ class MonitorModel: ObservableObject {
     @Published var inputSource: String = "USB-C"
     @Published var peripherals: [USBPeripheral] = []
 
-    @Published var isAdvancedExpanded: Bool = false
-    @Published var isPeripheralsExpanded: Bool = false
+    @Published var isConnected = false
+    @Published var isPowerBusy = false
+    @Published var isMuteBusy = false
+    @Published var isRefreshingSharpness = false
+    @Published var isSharpnessSetting = false
+    private var sharpnessWritesInFlight = 0
+    private var sharpnessWritePending = false
+    @Published var remoteKeyboardEnabled = UserDefaults.standard.bool(forKey: "remoteKeyboardEnabled") {
+        didSet { UserDefaults.standard.set(remoteKeyboardEnabled, forKey: "remoteKeyboardEnabled") }
+    }
+    @Published var remoteTabActive = false
     @Published var isLoading: Bool = false
     @Published var isPairing: Bool = false
     @Published var statusMessage: String = ""
     @Published var monitorIP: String = ""
-    @Published var showSettings: Bool = false
 
     // Keyboard & Remote D-Pad feedback
     @Published var activeKey: String = ""
@@ -112,6 +122,7 @@ class MonitorModel: ObservableObject {
     }
 
     func fetchAllStates() {
+        guard !isLoading, !isPairing, !isPowerBusy, !isRefreshingSharpness else { return }
         isLoading = true
         runScriptAsync(args: ["status"]) { [weak self] success, output in
             guard let self = self else { return }
@@ -158,8 +169,10 @@ class MonitorModel: ObservableObject {
                     }
                 }
 
+                self.isConnected = true
                 self.statusMessage = ""
             } else {
+                self.isConnected = false
                 self.statusMessage = output.isEmpty ? "Không đọc được trạng thái" : output
             }
         }
@@ -202,15 +215,37 @@ class MonitorModel: ObservableObject {
     }
 
     func setSharpness(to val: Double) {
+        guard !isRefreshingSharpness else { return }
         sharpness = val
         debounceSharpness?.cancel()
+        sharpnessWritePending = true
+        isSharpnessSetting = true
         let item = DispatchWorkItem { [weak self] in
-            self?.runScriptAsync(args: ["sharpness", "\(Int(val))"]) { success, out in
-                if !success { self?.statusMessage = out }
+            guard let self = self else { return }
+            self.sharpnessWritePending = false
+            self.sharpnessWritesInFlight += 1
+            self.runScriptAsync(args: ["sharpness", "\(Int(val))"]) { [weak self] success, out in
+                guard let self = self else { return }
+                self.sharpnessWritesInFlight -= 1
+                self.isSharpnessSetting = self.sharpnessWritePending || self.sharpnessWritesInFlight > 0
+                if !success { self.statusMessage = out }
             }
         }
         debounceSharpness = item
-        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.08, execute: item)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: item)
+    }
+
+    func refreshSharpness() {
+        guard isConnected, !isRefreshingSharpness, !isSharpnessSetting,
+              !isLoading, !isPairing, !isPowerBusy, !isPictureModeBusy else { return }
+        let target = Int(sharpness)
+        isRefreshingSharpness = true
+        statusMessage = "Đang khôi phục độ nét về \(target)…"
+        runScriptAsync(args: ["refresh-sharpness", "\(target)"]) { [weak self] success, out in
+            guard let self = self else { return }
+            self.isRefreshingSharpness = false
+            self.statusMessage = success ? "Đã khôi phục độ nét về \(target)." : out
+        }
     }
 
     func setTint(to val: Double) {
@@ -238,59 +273,73 @@ class MonitorModel: ObservableObject {
     }
 
     func setGameMode(to val: String) {
+        let previous = gameMode
         gameMode = val
         runScriptAsync(args: ["game-mode", val]) { [weak self] success, out in
             if success {
                 self?.gameMode = out
                 self?.statusMessage = ""
             } else {
+                self?.gameMode = previous
                 self?.statusMessage = out
             }
         }
     }
 
     func setPictureMode(to val: String) {
-        pictureMode = val
+        guard !isPictureModeBusy, !isRefreshingSharpness else { return }
+        isPictureModeBusy = true
         runScriptAsync(args: ["picture-mode", val.lowercased()]) { [weak self] success, out in
+            guard let self = self else { return }
+            self.isPictureModeBusy = false
             if success {
-                self?.fetchAllStates()
+                // CLI returns the verified raw mode; update only after readback.
+                self.pictureMode = out
+                self.statusMessage = ""
+                self.fetchAllStates()
             } else {
-                self?.statusMessage = out
+                self.statusMessage = out
             }
         }
     }
 
     func setSoundMode(to val: String) {
+        let previous = soundMode
         soundMode = val
         runScriptAsync(args: ["sound-mode", val]) { [weak self] success, out in
             if success {
                 self?.soundMode = out
                 self?.statusMessage = ""
             } else {
+                self?.soundMode = previous
                 self?.statusMessage = out
             }
         }
     }
 
     func setSpeakerSelect(to val: String) {
+        let previous = speakerSelect
         speakerSelect = val
         runScriptAsync(args: ["speaker", val]) { [weak self] success, out in
             if success {
                 self?.speakerSelect = out
                 self?.statusMessage = ""
             } else {
+                self?.speakerSelect = previous
                 self?.statusMessage = out
             }
         }
     }
 
     func setInputSource(to val: String) {
+        let previous = inputSource
         inputSource = val
         runScriptAsync(args: ["input", val]) { [weak self] success, out in
             if success {
                 self?.inputSource = out
                 self?.statusMessage = ""
             } else {
+                self?.inputSource = previous
                 self?.statusMessage = out
             }
         }
@@ -309,9 +358,12 @@ class MonitorModel: ObservableObject {
     }
 
     func toggleMute() {
+        guard !isMuteBusy else { return }
+        isMuteBusy = true
         let target = isMuted ? "off" : "on"
         isMuted.toggle()
         runScriptAsync(args: ["mute", target]) { [weak self] success, out in
+            self?.isMuteBusy = false
             if success {
                 self?.isMuted = (out == "muteOn")
                 self?.statusMessage = ""
@@ -351,12 +403,19 @@ class MonitorModel: ObservableObject {
     }
 
     func setPower(_ action: String) {
+        guard !isPowerBusy, !isRefreshingSharpness else { return }
+        isPowerBusy = true
+        statusMessage = "Đang gửi lệnh tắt màn hình…"
         runScriptAsync(args: ["power", action]) { [weak self] success, out in
-            if !success { self?.statusMessage = out }
+            guard let self = self else { return }
+            self.isPowerBusy = false
+            self.statusMessage = success ? "Màn hình đã nhận lệnh tắt. Dùng remote để bật lại." : (out.isEmpty ? "Không gửi được lệnh tắt. Kiểm tra kết nối rồi thử lại." : out)
+            if success { self.isConnected = false }
         }
     }
 
     func pairMonitor(targetHost: String? = nil) {
+        guard !isPairing, !isRefreshingSharpness else { return }
         isPairing = true
         statusMessage = "Bấm [Cho phép / Allow] trên màn hình S9..."
         var args = ["pair"]
@@ -379,785 +438,661 @@ class MonitorModel: ObservableObject {
 
 // Global shared model instance
 let sharedModel = MonitorModel()
+let sharedBrightness = DisplayBrightnessController()
 
 // ============================================================
-// GIAO DIỆN CHUẨN DESIGN SYSTEM APPLE (macOS CONTROL CENTER STYLE)
+// CONTROL CENTER: thao tác hàng ngày trước, cấu hình sâu sau.
+// SwiftUI không có API công khai để nhúng Control Center của macOS,
+// vì vậy layout này giữ control và material hệ thống nhưng không sao chép UI hệ thống.
 // ============================================================
 struct MonitorPopoverView: View {
     @ObservedObject var model: MonitorModel
-    @State private var editIP: String = ""
+    @ObservedObject private var controller = sharedBrightness
+    @State private var page = "overview"
+    @State private var editIP = ""
+    @Namespace private var glass
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var samsungReady: Bool {
+        model.isConnected && !model.isLoading && !model.isPairing && !model.isPowerBusy && !model.isRefreshingSharpness
+    }
+    private var ddc: [DDCDisplay] { controller.displays.filter { $0.brightness != nil || $0.volume != nil } }
+    private var panelHeight: CGFloat {
+        switch page {
+        case "overview": return 326
+        case "display": return min(570, 218 + CGFloat(ddc.count + controller.disconnected.count) * 72)
+        case "audio": return min(570, 174 + CGFloat(ddc.filter { $0.volume != nil }.count) * 76)
+        case "remote": return 350
+        case "picture": return 492
+        default: return 480
+        }
+    }
+    private var effectID: String { page == "audio" ? "audio" : "display" }
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 12) {
-                // 1. Header chuẩn macOS Control Center
-                HStack(spacing: 10) {
-                    Image(systemName: "display")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.accentColor)
-                        .frame(width: 24, height: 24)
+        CCGlassContainer {
+            if page == "overview" { overview }
+            else {
+                detail.id(page)
+                    .modifier(CCGlass(radius: 26, interactive: false))
+                    .modifier(MenuGlassIdentity(id: effectID, namespace: glass))
+            }
+        }
+        .padding(24)
+        .frame(width: 348, height: panelHeight + 48, alignment: .top)
+        .preferredColorScheme(.dark)
+        .onAppear { editIP = model.monitorIP; resizePanel() }
+        .onChange(of: page) { _ in resizePanel() }
+        .onChange(of: controller.displays.count) { _ in resizePanel() }
+        .onChange(of: controller.disconnected.count) { _ in resizePanel() }
+        .onDisappear { model.remoteTabActive = false }
+    }
 
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Samsung ViewFinity S9")
-                            .font(.system(size: 13, weight: .semibold))
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(Color.green)
-                                .frame(width: 6, height: 6)
-                            Text("5K • \(model.inputSource)")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                        }
-                    }
-
-                    Spacer()
-
-                    if model.isLoading || model.isPairing {
-                        ProgressView()
-                            .scaleEffect(0.65)
-                    } else {
-                        Button {
-                            model.fetchAllStates()
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Làm mới trạng thái")
-                    }
-                }
-
-                Divider()
-
-                // 2. Độ sáng màn hình (Apple Display Slider)
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Độ sáng đèn nền")
-                            .font(.system(size: 12, weight: .medium))
-                        Spacer()
-                        Text("\(Int(model.brightness)) / 50")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundColor(.secondary)
-                    }
-
-                    HStack(spacing: 8) {
-                        Image(systemName: "sun.min.fill")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-
-                        Slider(
-                            value: Binding(
-                                get: { model.brightness },
-                                set: { model.setBrightness(to: $0) }
-                            ),
-                            in: 0...50,
-                            step: 1
-                        )
-
-                        Image(systemName: "sun.max.fill")
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
-                    }
-
-                    // 4 Nút preset chuẩn Apple Capsule Pills
-                    HStack(spacing: 6) {
-                        PresetPill(title: "10", subtitle: "Tối", value: 10, current: model.brightness) {
-                            model.setBrightness(to: 10)
-                        }
-                        PresetPill(title: "25", subtitle: "Vừa", value: 25, current: model.brightness) {
-                            model.setBrightness(to: 25)
-                        }
-                        PresetPill(title: "40", subtitle: "Sáng", value: 40, current: model.brightness) {
-                            model.setBrightness(to: 40)
-                        }
-                        PresetPill(title: "50", subtitle: "Max", value: 50, current: model.brightness) {
-                            model.setBrightness(to: 50)
-                        }
-                    }
-                }
-
-                Divider()
-
-                // 3. Độ đậm màu (Color Saturation)
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        HStack(spacing: 6) {
-                            Image(systemName: "paintpalette.fill")
-                                .font(.system(size: 11))
-                                .foregroundColor(.purple)
-                            Text("Độ đậm màu (Color)")
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        Spacer()
-                        Text("\(Int(model.color)) / 50")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundColor(.secondary)
-                    }
-
-                    HStack(spacing: 8) {
-                        Image(systemName: "circle.lefthalf.striped.horizontal")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-
-                        Slider(
-                            value: Binding(
-                                get: { model.color },
-                                set: { model.setColor(to: $0) }
-                            ),
-                            in: 0...50,
-                            step: 1
-                        )
-
-                        Image(systemName: "circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundColor(.purple)
-                    }
-                }
-
-                Divider()
-
-                // 4. Game Mode (Công tắc Toggle Switch của macOS)
-                Toggle(isOn: Binding(
-                    get: { model.gameMode == "On" },
-                    set: { model.setGameMode(to: $0 ? "On" : "Off") }
-                )) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "bolt.fill")
-                            .font(.system(size: 12))
-                            .foregroundColor(model.gameMode == "On" ? .orange : .secondary)
-                            .frame(width: 16)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text("Game Mode (Low Latency)")
-                                .font(.system(size: 12, weight: .medium))
-                            Text(model.gameMode == "On" ? "Đang bật (Phản hồi tức thì)" : "Đang tắt (Chuẩn màu đồ họa)")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                }
-                .toggleStyle(.switch)
-
-                Divider()
-
-                // 4b. Picture Mode (Không gian màu chuẩn phần cứng)
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Image(systemName: "paintpalette.fill")
-                            .font(.system(size: 12))
-                            .foregroundColor(.indigo)
-                            .frame(width: 16)
-                        Text("Không gian màu (Color Space)")
-                            .font(.system(size: 12, weight: .medium))
-                        Spacer()
-                        Text(model.pictureMode)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.secondary)
-                    }
-
-                    HStack(spacing: 5) {
-                        ColorModePill(title: "sRGB", subtitle: "Web", isSelected: model.pictureMode.contains("sRGB") || model.pictureMode.contains("327714")) {
-                            model.setPictureMode(to: "srgb")
-                        }
-                        ColorModePill(title: "DCI-P3", subtitle: "Cinema", isSelected: model.pictureMode.contains("P3") || model.pictureMode.contains("327712")) {
-                            model.setPictureMode(to: "dci-p3")
-                        }
-                        ColorModePill(title: "BT.709", subtitle: "HDTV", isSelected: model.pictureMode.contains("709") || model.pictureMode.contains("327713")) {
-                            model.setPictureMode(to: "bt709")
-                        }
-                        ColorModePill(title: "Phim", subtitle: "Giải trí", isSelected: model.pictureMode.contains("Entertainment") || model.pictureMode.contains("65541")) {
-                            model.setPictureMode(to: "entertainment")
-                        }
-                    }
-                }
-
-                Divider()
-
-                // 5. Âm thanh loa màn hình & Chọn đầu ra
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text("Âm lượng loa")
-                            .font(.system(size: 12, weight: .medium))
-                        Spacer()
-                        Text("\(Int(model.volume))%")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundColor(.secondary)
-                    }
-
-                    HStack(spacing: 8) {
-                        Button {
-                            model.toggleMute()
-                        } label: {
-                            Image(systemName: model.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                                .font(.system(size: 12))
-                                .foregroundColor(model.isMuted ? .red : .secondary)
-                                .frame(width: 16)
-                        }
-                        .buttonStyle(.plain)
-
-                        Slider(
-                            value: Binding(
-                                get: { model.volume },
-                                set: { model.setVolume(to: $0) }
-                            ),
-                            in: 0...100,
-                            step: 1
-                        )
-                    }
-
-                    // Chế độ âm thanh & Ngõ ra
-                    HStack {
-                        Text("Chế độ âm thanh")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Picker("", selection: Binding(
-                            get: { model.soundMode },
-                            set: { model.setSoundMode(to: $0) }
-                        )) {
-                            Text("Standard (Chuẩn)").tag("Standard")
-                            Text("Game (Âm vòm)").tag("Game")
-                            Text("Music (Nhạc)").tag("Music")
-                            Text("Movie (Phim)").tag("Movie")
-                            Text("Amplify (Hội thoại)").tag("Amplify")
-                            Text("Adaptive (Tự thích ứng)").tag("Adaptive")
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .font(.system(size: 11))
-                    }
-
-                    // Đầu ra âm thanh
-                    HStack {
-                        Text("Đầu ra âm thanh")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Picker("", selection: Binding(
-                            get: { model.speakerSelect },
-                            set: { model.setSpeakerSelect(to: $0) }
-                        )) {
-                            Text("Loa trong màn hình").tag("Internal")
-                            Text("Thiết bị ngoài / Receiver").tag("Receiver")
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .font(.system(size: 11))
-                    }
-                }
-
-                Divider()
-
-                // 6. Cụm điều khiển từ xa D-Pad & Bàn phím Mac (Remote Control)
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        HStack(spacing: 5) {
-                            Image(systemName: "keyboard")
-                                .font(.system(size: 11))
-                                .foregroundColor(.accentColor)
-                            Text("Điều khiển từ xa (Remote)")
-                                .font(.system(size: 11, weight: .semibold))
-                        }
-                        Spacer()
-                        if !model.activeKeyBadge.isEmpty {
-                            Text("Đã bấm: \(model.activeKeyBadge)")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.accentColor)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.accentColor.opacity(0.12))
-                                .cornerRadius(4)
-                        }
-                    }
-
-                    // Visual D-Pad
-                    VStack(spacing: 4) {
-                        // Up
-                        HStack {
-                            Spacer()
-                            RemoteDpadKey(
-                                title: "↑",
-                                icon: "arrow.up",
-                                isHighlighted: model.activeKey == "cursorUp"
-                            ) {
-                                model.sendKey("cursorUp")
-                                model.flashKey("cursorUp", label: "↑")
-                            }
-                            .frame(width: 48, height: 26)
-                            Spacer()
-                        }
-
-                        // Left - OK - Right
-                        HStack(spacing: 6) {
-                            Spacer()
-                            RemoteDpadKey(
-                                title: "←",
-                                icon: "arrow.left",
-                                isHighlighted: model.activeKey == "cursorLeft"
-                            ) {
-                                model.sendKey("cursorLeft")
-                                model.flashKey("cursorLeft", label: "←")
-                            }
-                            .frame(width: 48, height: 26)
-
-                            RemoteDpadKey(
-                                title: "OK",
-                                icon: "checkmark",
-                                isProminent: true,
-                                isHighlighted: model.activeKey == "enter"
-                            ) {
-                                model.sendKey("enter")
-                                model.flashKey("enter", label: "Enter")
-                            }
-                            .frame(width: 54, height: 26)
-
-                            RemoteDpadKey(
-                                title: "→",
-                                icon: "arrow.right",
-                                isHighlighted: model.activeKey == "cursorRight"
-                            ) {
-                                model.sendKey("cursorRight")
-                                model.flashKey("cursorRight", label: "→")
-                            }
-                            .frame(width: 48, height: 26)
-                            Spacer()
-                        }
-
-                        // Down
-                        HStack {
-                            Spacer()
-                            RemoteDpadKey(
-                                title: "↓",
-                                icon: "arrow.down",
-                                isHighlighted: model.activeKey == "cursorDn"
-                            ) {
-                                model.sendKey("cursorDn")
-                                model.flashKey("cursorDn", label: "↓")
-                            }
-                            .frame(width: 48, height: 26)
-                            Spacer()
-                        }
-                    }
-                    .padding(6)
-                    .background(Color.secondary.opacity(0.06))
-                    .cornerRadius(8)
-
-                    // Cụm phím chức năng
-                    HStack(spacing: 5) {
-                        AppleButton(title: "Menu (M)", icon: "list.bullet") {
-                            model.sendKey("menu")
-                            model.flashKey("menu", label: "Menu")
-                        }
-                        AppleButton(title: "Home (H)", icon: "house") {
-                            model.sendKey("firstScreen")
-                            model.flashKey("firstScreen", label: "Home")
-                        }
-                        AppleButton(title: "Back (Esc)", icon: "arrow.uturn.backward") {
-                            model.sendKey("return")
-                            model.flashKey("return", label: "Esc")
-                        }
-                        AppleButton(title: "Dev Mode (12345)", icon: "terminal") {
-                            model.triggerDevMode()
-                        }
-                    }
-
-                    // Hướng dẫn phím Mac
-                    HStack(spacing: 4) {
-                        Image(systemName: "command")
-                            .font(.system(size: 9))
-                            .foregroundColor(.secondary)
-                        Text("Phím Mac: Mũi tên (↑ ↓ ← →), Enter, Esc, M, H, Phím số (0-9)")
-                            .font(.system(size: 9))
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.horizontal, 2)
-                }
-
-                Divider()
-
-                // 7. Cụm thiết bị ngoại vi & Cổng kết nối (USB Hub & Peripherals)
-                DisclosureGroup(
-                    isExpanded: Binding(
-                        get: { model.isPeripheralsExpanded },
-                        set: { _ in
-                            withAnimation(.snappy(duration: 0.15)) {
-                                model.isPeripheralsExpanded.toggle()
-                            }
-                        }
-                    )
-                ) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        // Nguồn vào (Input Source)
-                        HStack {
-                            Text("Nguồn đầu vào")
-                                .font(.system(size: 11))
-                                .foregroundColor(.secondary)
-                            Spacer()
-                            Picker("", selection: Binding(
-                                get: { model.inputSource },
-                                set: { model.setInputSource(to: $0) }
-                            )) {
-                                Text("USB-C (Thunderbolt Mac)").tag("USB-C")
-                                Text("Mini-DisplayPort").tag("Mini-DP")
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .font(.system(size: 11))
-                        }
-
-                        // Danh sách thiết bị cắm vào USB Hub
-                        Text("Thiết bị cắm qua USB Hub màn hình:")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.secondary)
-                            .padding(.top, 2)
-
-                        if model.peripherals.isEmpty {
-                            Text("Không có thiết bị ngoại vi nào được cắm")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                                .padding(.leading, 4)
-                        } else {
-                            VStack(alignment: .leading, spacing: 4) {
-                                ForEach(model.peripherals) { dev in
-                                    HStack(spacing: 6) {
-                                        Image(systemName: iconForDevice(name: dev.name))
-                                            .font(.system(size: 10))
-                                            .foregroundColor(.accentColor)
-                                            .frame(width: 14)
-                                        Text(dev.name)
-                                            .font(.system(size: 11))
-                                            .lineLimit(1)
-                                        if !dev.vendor.isEmpty {
-                                            Text("(\(dev.vendor))")
-                                                .font(.system(size: 9))
-                                                .foregroundColor(.secondary)
-                                        }
-                                        Spacer()
-                                    }
-                                    .padding(.vertical, 2)
-                                    .padding(.horizontal, 6)
-                                    .background(Color.secondary.opacity(0.06))
-                                    .cornerRadius(4)
-                                }
-                            }
-                        }
-                    }
-                    .padding(.top, 4)
+    private var overview: some View {
+        VStack(spacing: 12) {
+            overviewModule("Màn hình", id: "display", low: "sun.min.fill", high: "sun.max.fill", value: groupValue(volume: false), enabled: samsungReady || ddc.contains { $0.brightness != nil }) { setGroup($0, volume: false) }
+            overviewModule("Âm thanh", id: "audio", low: "speaker.fill", high: "speaker.wave.3.fill", value: groupValue(volume: true), enabled: samsungReady || ddc.contains { $0.volume != nil }) { setGroup($0, volume: true) }
+            HStack(spacing: 12) {
+                shortcut("Remote", symbol: "av.remote.fill", enabled: samsungReady) { navigate("remote") }
+                shortcut("Áp lại nét", symbol: "arrow.clockwise", enabled: samsungReady && !model.isSharpnessSetting && !model.isPictureModeBusy) { model.refreshSharpness() }
+                shortcut("Tắt S9", symbol: "power", enabled: samsungReady) { model.setPower("off") }
+            }
+            HStack(spacing: 12) {
+                Button { navigate("settings") } label: {
+                    Label("Cài đặt", systemImage: "slider.horizontal.3")
+                        .frame(maxWidth: .infinity, minHeight: 38)
+                        .contentShape(RoundedRectangle(cornerRadius: 19))
+                        .modifier(CCGlass(radius: 19, interactive: true))
+                }.buttonStyle(.plain)
+                Menu {
+                    Button("Làm mới") { controller.refresh(); model.fetchAllStates() }
+                    if !model.statusMessage.isEmpty { Text(model.statusMessage) }
+                    if !controller.message.isEmpty { Text(controller.message) }
+                    Divider()
+                    Button("Thoát") { NSApp.terminate(nil) }.keyboardShortcut("q")
                 } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "cable.connector.horizontal")
-                            .font(.system(size: 11))
-                            .foregroundColor(.accentColor)
-                        Text("Thiết bị ngoại vi & Cổng kết nối")
-                            .font(.system(size: 11, weight: .medium))
-                    }
+                    Image(systemName: "ellipsis").frame(width: 44, height: 38)
+                        .modifier(CCGlass(radius: 19, interactive: true))
                 }
+                .menuStyle(.button).buttonStyle(.plain).fixedSize()
+            }
+            .font(.system(size: 12))
+        }
+    }
 
-                Divider()
-
-                // 8. Tùy chỉnh hình ảnh nâng cao (DisclosureGroup)
-                DisclosureGroup(
-                    isExpanded: Binding(
-                        get: { model.isAdvancedExpanded },
-                        set: { _ in
-                            withAnimation(.snappy(duration: 0.15)) {
-                                model.isAdvancedExpanded.toggle()
-                            }
-                        }
-                    )
-                ) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        // Contrast
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                Text("Độ tương phản (Contrast)")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text("\(Int(model.contrast)) / 50")
-                                    .font(.system(size: 10, design: .monospaced))
-                            }
-                            Slider(value: Binding(get: { model.contrast }, set: { model.setContrast(to: $0) }), in: 0...50, step: 1)
-                        }
-
-                        // Sharpness
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                Text("Độ sắc nét (Sharpness)")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text("\(Int(model.sharpness)) / 20")
-                                    .font(.system(size: 10, design: .monospaced))
-                            }
-                            Slider(value: Binding(get: { model.sharpness }, set: { model.setSharpness(to: $0) }), in: 0...20, step: 1)
-                        }
-
-                        // Sắc thái màu (Tint)
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                Text("Sắc thái màu (Tint G/R)")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text("\(Int(model.tint))")
-                                    .font(.system(size: 10, design: .monospaced))
-                            }
-                            Slider(value: Binding(get: { model.tint }, set: { model.setTint(to: $0) }), in: -15...15, step: 1)
-                        }
-
-                        // Mức sáng điểm đen (Black Level)
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack {
-                                Text("Mức sáng điểm đen (Black Level)")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text("\(Int(model.blackLevel))")
-                                    .font(.system(size: 10, design: .monospaced))
-                            }
-                            Slider(value: Binding(get: { model.blackLevel }, set: { model.setBlackLevel(to: $0) }), in: -5...5, step: 1)
-                        }
-
-                        // Cài đặt mạng / Ghép nối
-                        HStack(spacing: 8) {
-                            Button {
-                                model.pairMonitor()
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "key.fill")
-                                    Text(model.isPairing ? "Đang chờ..." : "Ghép nối lại")
-                                }
-                                .font(.system(size: 10))
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(model.isPairing)
-
-                            Spacer()
-
-                            Button {
-                                model.showSettings.toggle()
-                                editIP = model.monitorIP
-                            } label: {
-                                Image(systemName: "gearshape")
-                                    .font(.system(size: 10))
-                            }
-                            .buttonStyle(.bordered)
-                        }
-
-                        if model.showSettings {
-                            HStack(spacing: 6) {
-                                TextField("192.168.x.x", text: $editIP)
-                                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                                    .font(.system(size: 11, design: .monospaced))
-                                Button("Lưu") {
-                                    model.monitorIP = editIP
-                                    model.showSettings = false
-                                    model.pairMonitor(targetHost: editIP)
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .font(.system(size: 10))
-                            }
-                        }
-                    }
-                    .padding(.top, 4)
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "slider.horizontal.3")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
-                        Text("Tùy chỉnh hình ảnh & Mạng")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                }
-
-                // Status message
-                if !model.statusMessage.isEmpty {
-                    HStack(spacing: 5) {
-                        Image(systemName: model.statusMessage.contains("Lỗi") ? "exclamationmark.triangle.fill" : "info.circle.fill")
-                            .font(.system(size: 10))
-                            .foregroundColor(model.statusMessage.contains("Lỗi") ? .red : .accentColor)
-                        Text(model.statusMessage)
-                            .font(.system(size: 10))
-                            .foregroundColor(model.statusMessage.contains("Lỗi") ? .red : .secondary)
-                            .lineLimit(2)
-                    }
-                    .padding(6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.secondary.opacity(0.08))
-                    .cornerRadius(6)
-                }
-
-                Divider()
-
-                // 9. Footer (macOS Menu Bar Standard)
+    private func overviewModule(_ title: String, id: String, low: String, high: String, value: Double, enabled: Bool, action: @escaping (Double) -> Void) -> some View {
+        ZStack {
+            Button { navigate(id) } label: {
+                Color.clear.contentShape(RoundedRectangle(cornerRadius: 24))
+            }.buttonStyle(.plain).accessibilityLabel("Mở \(title)")
+            VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Button {
-                        model.setPower("powerOff")
-                    } label: {
-                        Label("Tắt màn hình", systemImage: "power")
-                            .font(.system(size: 11))
-                            .foregroundColor(.red.opacity(0.85))
-                    }
-                    .buttonStyle(.plain)
-
+                    Text(title).font(.system(size: 13, weight: .semibold))
                     Spacer()
+                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .semibold))
+                }.allowsHitTesting(false)
+            ControlCenterSlider(symbol: low, trailingSymbol: high, value: value, range: 0...100, action: action, accessibilityName: "\(title), đồng bộ các màn hình")
+                .disabled(!enabled)
+            }.padding(.horizontal, 16).padding(.vertical, 12)
+        }
+        .frame(height: 72)
+        .modifier(CCGlass(radius: 24, interactive: false))
+        .modifier(MenuGlassIdentity(id: id, namespace: glass))
+    }
 
-                    Button {
-                        NSApplication.shared.terminate(nil)
-                    } label: {
-                        Text("Thoát")
-                            .font(.system(size: 11))
-                            .foregroundColor(.secondary)
+    private func shortcut(_ title: String, symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 5) {
+                Image(systemName: symbol).font(.system(size: 22, weight: .medium)).frame(width: 52, height: 46)
+                Text(title).font(.system(size: 10, weight: .semibold))
+            }.frame(maxWidth: .infinity).padding(.vertical, 7)
+                .modifier(CCGlass(radius: 25, interactive: true))
+        }.buttonStyle(.plain).disabled(!enabled).help("\(title) · Samsung S9").accessibilityLabel("\(title), Samsung S9")
+    }
+
+    private var detail: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Button { navigate("overview") } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                    .buttonStyle(.plain).help("Quay lại").accessibilityLabel("Quay lại")
+                Menu {
+                    Button("Màn hình") { navigate("display") }
+                    Button("Âm thanh") { navigate("audio") }
+                    Divider()
+                    Button("Samsung · Hình ảnh") { navigate("picture") }
+                    Button("Samsung · Remote") { navigate("remote") }
+                    Button("Cài đặt") { navigate("settings") }
+                } label: { Text(pageTitle).font(.system(size: 14, weight: .semibold)) }
+                .menuStyle(.borderlessButton).fixedSize()
+                Spacer()
+                Button { controller.refresh(); model.fetchAllStates() } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(.plain).help("Làm mới")
+                    .disabled(controller.scanning || model.isLoading || model.isPowerBusy)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if page == "display" { displayDetail }
+                    if page == "audio" { audioDetail }
+                    if page == "picture" { pictureDetail }
+                    if page == "remote" { remoteDetail }
+                    if page == "settings" { settingsDetail }
+                }.padding(.horizontal, 2).padding(.vertical, 2)
+            }
+            if !controller.message.isEmpty || !model.statusMessage.isEmpty {
+                DisclosureGroup("Thông báo") {
+                    Text(!controller.message.isEmpty ? controller.message : model.statusMessage)
+                        .font(.caption).textSelection(.enabled)
+                }.font(.caption)
+            }
+        }.padding(16)
+    }
+
+    private var pageTitle: String {
+        switch page {
+        case "display": return "Màn hình"
+        case "audio": return "Âm thanh"
+        case "picture": return "Samsung · Hình ảnh"
+        case "remote": return "Samsung · Remote"
+        default: return "Cài đặt"
+        }
+    }
+
+    private var displayDetail: some View {
+        Group {
+            VStack(alignment: .leading, spacing: 10) {
+                Button { navigate("picture") } label: {
+                    HStack { Text("Samsung ViewFinity S9").font(.headline); Spacer(); Image(systemName: "chevron.right") }
+                }.buttonStyle(.plain)
+                ControlCenterSlider(symbol: "sun.min.fill", trailingSymbol: "sun.max.fill", value: model.brightness, range: 0...50, action: model.setBrightness, accessibilityName: "Độ sáng Samsung")
+                    .disabled(!samsungReady)
+            }
+            ForEach(ddc.filter { $0.brightness != nil }) { display in
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text(display.name).font(.headline)
+                        Spacer()
+                        Menu {
+                            Button("Ngắt kết nối") { controller.setConnected(false, uuid: display.id, name: display.name) }
+                        } label: { Image(systemName: "ellipsis.circle") }.menuStyle(.borderlessButton).fixedSize()
                     }
-                    .buttonStyle(.plain)
+                    ControlCenterSlider(symbol: "sun.min.fill", trailingSymbol: "sun.max.fill", value: display.brightness ?? 0, range: 0...(display.maximum ?? 100), action: { controller.setBrightness($0, for: display.id) }, accessibilityName: "Độ sáng \(display.name)")
                 }
             }
+            reconnectRows
+            Divider()
+            Button("Cài đặt màn hình…") { navigate("settings") }.buttonStyle(.plain)
+        }
+    }
+
+    private var audioDetail: some View {
+        Group {
+            ControlCenterDetailSlider(title: "Samsung ViewFinity S9", value: model.volume, range: 0...100, action: model.setVolume).disabled(!samsungReady)
+            ForEach(ddc.filter { $0.volume != nil }) { display in
+                ControlCenterDetailSlider(title: display.name, value: display.volume ?? 0, range: 0...(display.maximumVolume ?? 100), action: { controller.setVolume($0, for: display.id) })
+            }
+            DisclosureGroup("Âm thanh Samsung") {
+                VStack(spacing: 12) {
+                    Toggle("Tắt tiếng", isOn: Binding(get: { model.isMuted }, set: { _ in model.toggleMute() }))
+                    Picker("Đầu ra", selection: Binding(get: { model.speakerSelect }, set: model.setSpeakerSelect)) {
+                        Text("Loa màn hình").tag("Internal"); Text("Thiết bị ngoài").tag("Receiver")
+                    }
+                    Picker("Chế độ", selection: Binding(get: { model.soundMode }, set: model.setSoundMode)) {
+                        ForEach(["Standard", "Game", "Music", "Movie", "Amplify", "Adaptive", "Optimized"], id: \.self) { Text($0).tag($0) }
+                    }
+                }.padding(.top, 8).disabled(!samsungReady)
+            }.font(.caption)
+        }
+    }
+
+    private var pictureDetail: some View {
+        Group {
+            Picker("Không gian màu", selection: Binding(get: { pictureSelection }, set: model.setPictureMode)) {
+                Text("sRGB").tag("srgb"); Text("DCI-P3").tag("dci-p3"); Text("BT.709").tag("bt709")
+                Text("Giải trí").tag("entertainment"); Text("Standard").tag("standard")
+                Text("DICOM").tag("dicom"); Text("Custom").tag("custom")
+                if pictureSelection == "unknown" { Text(model.pictureMode).tag("unknown") }
+            }.disabled(!samsungReady || model.isPictureModeBusy)
+            Picker("Game Mode", selection: Binding(get: { model.gameMode }, set: model.setGameMode)) {
+                Text("Tắt").tag("Off"); Text("Bật").tag("On"); Text("Tự động").tag("Auto")
+            }.disabled(!samsungReady)
+            ControlCenterDetailSlider(title: "Độ đậm màu", value: model.color, range: 0...50, action: model.setColor).disabled(!samsungReady)
+            ControlCenterDetailSlider(title: "Tương phản", value: model.contrast, range: 0...50, action: model.setContrast).disabled(!samsungReady)
+            ControlCenterDetailSlider(title: "Độ nét", value: model.sharpness, range: 0...20, action: model.setSharpness).disabled(!samsungReady)
+            Button { model.refreshSharpness() } label: { Label(model.isRefreshingSharpness ? "Đang áp lại nét…" : "Áp lại độ nét", systemImage: "arrow.clockwise") }
+                .disabled(!samsungReady || model.isSharpnessSetting || model.isPictureModeBusy)
+            DisclosureGroup("Tinh chỉnh màu") {
+                VStack(spacing: 14) {
+                    ControlCenterDetailSlider(title: "Sắc thái G/R", value: model.tint, range: -15...15, action: model.setTint)
+                    ControlCenterDetailSlider(title: "Mức điểm đen", value: model.blackLevel, range: -5...5, action: model.setBlackLevel)
+                }.padding(.top, 10).disabled(!samsungReady)
+            }
+        }
+    }
+
+    private var remoteDetail: some View {
+        VStack(spacing: 12) {
+            remoteButton("Lên", symbol: "chevron.up", key: "cursorUp")
+            HStack {
+                remoteButton("Trái", symbol: "chevron.left", key: "cursorLeft")
+                remoteButton("OK", symbol: "checkmark", key: "enter")
+                remoteButton("Phải", symbol: "chevron.right", key: "cursorRight")
+            }
+            remoteButton("Xuống", symbol: "chevron.down", key: "cursorDn")
+            HStack {
+                remoteButton("Quay lại", symbol: "arrow.uturn.backward", key: "return")
+                remoteButton("Home", symbol: "house", key: "firstScreen")
+                remoteButton("Menu", symbol: "gearshape", key: "menu")
+            }
+            Toggle("Dùng bàn phím cho remote", isOn: Binding(get: { model.remoteKeyboardEnabled }, set: {
+                model.remoteKeyboardEnabled = $0; model.remoteTabActive = $0
+            }))
+            Text("↑ ↓ ← → · Enter chọn · Esc quay lại · M Menu · H Home · 0–9")
+                .font(.caption).foregroundStyle(.secondary)
+        }.disabled(!samsungReady)
+    }
+
+    private var settingsDetail: some View {
+        Group {
+            Toggle("Phím độ sáng & âm lượng", isOn: Binding(get: { controller.keysRequested }, set: {
+                if $0 { controller.enableKeys() } else { controller.disableKeys() }
+            }))
+            Text("F1/F2 và F10–F12 điều khiển màn hình dưới con trỏ.")
+                .font(.caption).foregroundStyle(.secondary)
+            if controller.keysRequested && !controller.keysEnabled {
+                Text("Phím tắt chưa sẵn sàng. Kiểm tra quyền Trợ năng cho bản app hiện tại.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Mở Trợ năng…") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
+            Button(controller.scanning ? "Đang quét…" : "Quét lại màn hình") { controller.refresh(); model.fetchAllStates() }.disabled(controller.scanning)
+            reconnectRows
+            DisclosureGroup("Kết nối Samsung") {
+                VStack(alignment: .leading, spacing: 12) {
+                    TextField("Địa chỉ IP", text: $editIP).textFieldStyle(.roundedBorder).onSubmit { pair() }
+                    Button(model.isPairing ? "Đang ghép nối…" : "Lưu & ghép nối") { pair() }.disabled(model.isPairing || model.isLoading)
+                    Picker("Nguồn vào", selection: Binding(get: { model.inputSource }, set: model.setInputSource)) {
+                        Text("USB-C").tag("USB-C"); Text("Mini-DisplayPort").tag("Mini-DP")
+                    }.disabled(!samsungReady)
+                    DisclosureGroup("Thiết bị USB trên Mac (\(model.peripherals.count))") {
+                        ForEach(model.peripherals) { Text($0.name).font(.caption) }
+                    }
+                }.padding(.top, 10)
+            }
+            DisclosureGroup("Trạng thái DDC") {
+                ForEach(controller.displays) { display in
+                    Text("\(display.name): \(display.error ?? "Đã kết nối")").font(.caption)
+                }
+            }
+        }
+    }
+
+    private var reconnectRows: some View {
+        ForEach(controller.disconnected.keys.sorted(), id: \.self) { id in
+            Button("Kết nối lại \(controller.disconnected[id] ?? "màn hình")") {
+                controller.setConnected(true, uuid: id, name: controller.disconnected[id] ?? "Màn hình")
+            }
+        }
+    }
+
+    private func groupValue(volume: Bool) -> Double {
+        var values = ddc.compactMap { display -> Double? in
+            guard let current = volume ? display.volume : display.brightness,
+                  let maximum = volume ? display.maximumVolume : display.maximum, maximum > 0 else { return nil }
+            return current / maximum * 100
+        }
+        if model.isConnected { values.append(volume ? model.volume : model.brightness * 2) }
+        return values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
+    }
+    private func setGroup(_ percent: Double, volume: Bool) {
+        if samsungReady {
+            if volume { model.setVolume(to: percent) } else { model.setBrightness(to: (percent / 2).rounded()) }
+        }
+        for display in ddc {
+            if let maximum = volume ? display.maximumVolume : display.maximum {
+                if volume { controller.setVolume(percent * maximum / 100, for: display.id) }
+                else { controller.setBrightness(percent * maximum / 100, for: display.id) }
+            }
+        }
+    }
+    private var pictureSelection: String {
+        let value = model.pictureMode.lowercased()
+        for (text, code, tag) in [("srgb", "327712", "srgb"), ("p3", "327714", "dci-p3"), ("709", "327713", "bt709"), ("entertainment", "65541", "entertainment"), ("standard", "458753", "standard"), ("dicom", "327715", "dicom"), ("custom", "327716", "custom")] {
+            if value.contains(text) || value.contains(code) { return tag }
+        }
+        return "unknown"
+    }
+    private func remoteButton(_ title: String, symbol: String, key: String) -> some View {
+        Button { model.sendKey(key); model.flashKey(key, label: title) } label: { Label(title, systemImage: symbol) }
+            .accessibilityLabel(title)
+    }
+    private func pair() {
+        let host = editIP.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty, !model.isPairing, !model.isLoading else { return }
+        model.pairMonitor(targetHost: host)
+    }
+    private func navigate(_ destination: String) {
+        model.remoteTabActive = model.remoteKeyboardEnabled
+        withAnimation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 1)) { page = destination }
+    }
+    private func resizePanel() {
+        guard let panel = NSApp.windows.first(where: { $0 is ControlCenterPanel }) as? ControlCenterPanel else { return }
+        var frame = panel.frame
+        frame.origin.y += frame.height - (panelHeight + 48)
+        frame.size = NSSize(width: 348, height: panelHeight + 48)
+        // Glass owns the geometry transition; a second NSWindow resize animation
+        // leaves an independent window silhouette behind the glass surface.
+        panel.setFrame(frame, display: true, animate: false)
+        panel.positionAtAnchor()
+        panel.invalidateShadow()
+    }
+}
+
+struct ControlCenterSurface<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
             .padding(14)
-        }
-        .frame(width: 295)
-        .frame(maxHeight: 530)
-    }
-
-    func iconForDevice(name: String) -> String {
-        let n = name.lowercased()
-        if n.contains("keyboard") || n.contains("lofree") || n.contains("key") {
-            return "keyboard"
-        } else if n.contains("mouse") {
-            return "mouse"
-        } else if n.contains("speaker") || n.contains("kanto") || n.contains("audio") || n.contains("ora4") {
-            return "speaker.wave.2"
-        } else if n.contains("cam") || n.contains("slimfit") {
-            return "web.camera"
-        } else if n.contains("adapter") || n.contains("av") {
-            return "cable.connector"
-        } else if n.contains("s27c900p") {
-            return "display"
-        }
-        return "usb"
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Color.white.opacity(0.28), lineWidth: 0.8))
     }
 }
 
-// D-Pad Button with highlight effect
-struct RemoteDpadKey: View {
-    let title: String
-    let icon: String
-    var isProminent: Bool = false
-    var isHighlighted: Bool = false
-    let action: () -> Void
-
+struct CCGlassContainer<Content: View>: View {
+    let content: Content
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 2) {
-                if !icon.isEmpty {
-                    Image(systemName: icon)
-                        .font(.system(size: 10, weight: isProminent ? .bold : .medium))
-                }
-                if isProminent {
-                    Text(title)
-                        .font(.system(size: 11, weight: .bold))
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(
-                isHighlighted ? Color.accentColor :
-                (isProminent ? Color.accentColor.opacity(0.85) : Color.secondary.opacity(0.12))
-            )
-            .foregroundColor(
-                isHighlighted || isProminent ? .white : .primary
-            )
-            .cornerRadius(5)
-            .animation(.snappy(duration: 0.1), value: isHighlighted)
-        }
-        .buttonStyle(.plain)
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: 6) { content }
+        } else { content }
     }
 }
 
-// Capsule Pill Button chuẩn macOS Control Center
-struct PresetPill: View {
-    let title: String
-    let subtitle: String
+struct CCGlass: ViewModifier {
+    let radius: CGFloat
+    let interactive: Bool
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content
+                .foregroundStyle(.white)
+                .blendMode(.plusLighter)
+                .glassEffect(PrivateControlCenterGlass.material.tint(.black.opacity(0.10)).interactive(interactive), in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .environment(\.colorScheme, .dark)
+        } else {
+            content.background(.regularMaterial, in: RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .environment(\.colorScheme, .dark)
+        }
+    }
+}
+
+struct MenuGlassIdentity: ViewModifier {
+    let id: String
+    let namespace: Namespace.ID
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.glassEffectID(id, in: namespace).glassEffectTransition(.matchedGeometry)
+        } else { content }
+    }
+}
+
+struct ControlCenterTileStyle: ButtonStyle {
+    let tint: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundColor(tint)
+            .background(tint.opacity(configuration.isPressed ? 0.20 : 0.11), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Color.white.opacity(0.3), lineWidth: 0.8))
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+    }
+}
+
+struct ControlCenterPresetStyle: ButtonStyle {
+    let selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.caption.weight(.semibold))
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
+            .foregroundColor(selected ? .white : .primary)
+            .background(selected ? Color.accentColor : Color.primary.opacity(configuration.isPressed ? 0.16 : 0.09), in: Capsule())
+    }
+}
+
+struct ControlCenterFooterButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.subheadline.weight(.medium))
+            .padding(.vertical, 9)
+            .padding(.horizontal, 12)
+            .background(Color.primary.opacity(configuration.isPressed ? 0.16 : 0.09), in: Capsule())
+            .contentShape(Capsule())
+    }
+}
+
+struct ControlCenterIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.medium))
+            .frame(width: 32, height: 32)
+            .background(Color.primary.opacity(configuration.isPressed ? 0.16 : 0.09), in: Circle())
+            .contentShape(Circle())
+    }
+}
+
+struct ControlCenterSlider: View {
+    let symbol: String
+    let trailingSymbol: String
     let value: Double
-    let current: Double
-    let action: () -> Void
-
-    var isSelected: Bool { Int(current) == Int(value) }
+    let range: ClosedRange<Double>
+    let action: (Double) -> Void
+    let accessibilityName: String
 
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 1) {
-                Text(title)
-                    .font(.system(size: 11, weight: isSelected ? .bold : .medium))
-                Text(subtitle)
-                    .font(.system(size: 8))
-                    .foregroundColor(isSelected ? .white.opacity(0.8) : .secondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-            .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.12))
-            .foregroundColor(isSelected ? .white : .primary)
-            .cornerRadius(6)
+        HStack(spacing: 9) {
+            Image(systemName: symbol).foregroundStyle(.secondary)
+            CCNativeSlider(value: value, range: range, label: accessibilityName, action: action)
+                .frame(height: 24)
+            Image(systemName: trailingSymbol).foregroundStyle(.secondary)
         }
-        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityName)
+        .accessibilityValue("\(Int(value)), từ \(Int(range.lowerBound)) đến \(Int(range.upperBound))")
     }
 }
 
-// Nút chọn không gian màu phần cứng
-struct ColorModePill: View {
-    let title: String
-    let subtitle: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 1) {
-                Text(title)
-                    .font(.system(size: 11, weight: isSelected ? .bold : .medium))
-                Text(subtitle)
-                    .font(.system(size: 8))
-                    .foregroundColor(isSelected ? .white.opacity(0.85) : .secondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 5)
-            .background(isSelected ? Color.accentColor : Color.secondary.opacity(0.12))
-            .foregroundColor(isSelected ? .white : .primary)
-            .cornerRadius(6)
-        }
-        .buttonStyle(.plain)
+final class CCSliderCell: NSSliderCell {
+    override func drawBar(inside rect: NSRect, flipped: Bool) {
+        let track = NSRect(x: rect.minX, y: rect.midY - 2, width: rect.width, height: 4)
+        NSColor.tertiaryLabelColor.setFill()
+        NSBezierPath(roundedRect: track, xRadius: 2, yRadius: 2).fill()
+        let fraction = (doubleValue - minValue) / max(1, maxValue - minValue)
+        let filled = NSRect(x: track.minX, y: track.minY, width: track.width * fraction, height: track.height)
+        NSColor.labelColor.setFill()
+        NSBezierPath(roundedRect: filled, xRadius: 2, yRadius: 2).fill()
+    }
+    override func drawKnob(_ knobRect: NSRect) {
+        if #available(macOS 26.0, *), isHighlighted { return }
+        NSColor.white.setFill()
+        let knob = NSRect(x: knobRect.midX - 9, y: knobRect.midY - 7, width: 18, height: 14)
+        NSBezierPath(roundedRect: knob, xRadius: 7, yRadius: 7).fill()
     }
 }
 
-struct AppleButton: View {
+final class CCGlassSlider: NSSlider {
+    private var glassThumb: NSView?
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        if #available(macOS 26.0, *) {
+            let thumb = NSGlassEffectView()
+            // The control-center thumb is a light lens even on a dark widget.
+            // Isolate its appearance from the dark panel; inheriting Dark Aqua
+            // turns regular glass into an opaque-looking charcoal capsule.
+            thumb.appearance = NSAppearance(named: .aqua)
+            thumb.cornerRadius = 10
+            thumb.effectIsInteractive = true
+            thumb.style = .regular
+            thumb.isHidden = true
+            addSubview(thumb)
+            glassThumb = thumb
+        }
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func mouseDown(with event: NSEvent) {
+        glassThumb?.isHidden = false
+        needsLayout = true
+        super.mouseDown(with: event)
+        glassThumb?.isHidden = true
+        needsDisplay = true
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? { bounds.contains(point) ? self : nil }
+    override func layout() {
+        super.layout()
+        let fraction = (doubleValue - minValue) / max(1, maxValue - minValue)
+        let width: CGFloat = 24
+        glassThumb?.frame = NSRect(x: (bounds.width - width) * fraction, y: bounds.midY - 10, width: width, height: 20)
+    }
+    override func draw(_ dirtyRect: NSRect) { super.draw(dirtyRect); needsLayout = true }
+}
+
+struct CCNativeSlider: NSViewRepresentable {
+    let value: Double
+    let range: ClosedRange<Double>
+    let label: String
+    let action: (Double) -> Void
+    @Environment(\.isEnabled) private var isEnabled
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+    func makeNSView(context: Context) -> NSSlider {
+        let slider = CCGlassSlider()
+        slider.appearance = NSAppearance(named: .darkAqua)
+        slider.cell = CCSliderCell()
+        slider.focusRingType = .none
+        slider.isContinuous = true
+        slider.target = context.coordinator
+        slider.action = #selector(Coordinator.changed(_:))
+        slider.setAccessibilityLabel(label)
+        return slider
+    }
+    func updateNSView(_ slider: NSSlider, context: Context) {
+        slider.minValue = range.lowerBound
+        slider.maxValue = range.upperBound
+        slider.doubleValue = value
+        slider.isEnabled = isEnabled
+        slider.needsLayout = true
+        context.coordinator.action = action
+    }
+    final class Coordinator: NSObject {
+        var action: (Double) -> Void
+        init(action: @escaping (Double) -> Void) { self.action = action }
+        @objc func changed(_ slider: NSSlider) { action(slider.doubleValue.rounded()) }
+    }
+}
+
+struct ControlCenterDetailSlider: View {
     let title: String
-    let icon: String
-    let action: () -> Void
+    let value: Double
+    let range: ClosedRange<Double>
+    let action: (Double) -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 3) {
-                Image(systemName: icon)
-                    .font(.system(size: 9))
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
                 Text(title)
-                    .font(.system(size: 10))
+                Spacer()
+                Text("\(Int(value)) / \(Int(range.upperBound))").monospacedDigit().foregroundColor(.secondary)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.1))
-            .cornerRadius(5)
+            CCNativeSlider(value: value, range: range, label: title, action: action)
+                .frame(height: 28)
         }
-        .buttonStyle(.plain)
     }
+}
+
+final class ControlCenterPanel: NSPanel {
+    private weak var anchorView: NSView?
+    private var anchorRect = NSRect.zero
+    var isShown: Bool { isVisible }
+    init() {
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 320, height: 518), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        isOpaque = false
+        backgroundColor = .clear
+        appearance = NSAppearance(named: .darkAqua)
+        // Each glass surface renders its own shadow. A window shadow outlines
+        // transparent space and produces a second border around detail menus.
+        hasShadow = false
+        level = .popUpMenu
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        isReleasedWhenClosed = false
+    }
+    override var canBecomeKey: Bool { true }
+    var contentSize: NSSize {
+        get { contentView?.frame.size ?? .zero }
+        set { setContentSize(newValue) }
+    }
+    var animates = true
+    var behavior: NSPopover.Behavior = .transient
+    func show(relativeTo rect: NSRect, of view: NSView, preferredEdge: NSRectEdge) {
+        anchorView = view
+        anchorRect = rect
+        contentView?.layoutSubtreeIfNeeded()
+        positionAtAnchor()
+        orderFrontRegardless()
+    }
+    func positionAtAnchor() {
+        guard let view = anchorView else { return }
+        guard let window = view.window else { return }
+        let anchor = window.convertToScreen(view.convert(anchorRect, to: nil))
+        guard let screen = NSScreen.screens.first(where: { $0.frame.contains(NSPoint(x: anchor.midX, y: anchor.midY)) }) ?? window.screen else { return }
+        let visible = screen.visibleFrame
+        // Anchor visible glass, excluding the transparent 24pt shadow margin.
+        let inset: CGFloat = 24
+        let contentWidth = frame.width - inset * 2
+        let contentRight = min(max(anchor.maxX, visible.minX + contentWidth + 8), visible.maxX - 8)
+        setFrameOrigin(NSPoint(x: contentRight - frame.width + inset,
+                               y: max(visible.minY - inset, anchor.minY - 6 - frame.height + inset)))
+        if CommandLine.arguments.contains("--qc") {
+            print("QC_ANCHOR_GAP=\(anchor.minY - (frame.maxY - inset)) QC_GLASS_RIGHT=\(frame.maxX - inset) QC_ICON_RIGHT=\(anchor.maxX)")
+            fflush(stdout)
+        }
+    }
+    override func performClose(_ sender: Any?) { orderOut(sender) }
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
-    var popover: NSPopover!
+    var popover: ControlCenterPanel!
     var mouseEventMonitor: Any?
     var localKeyMonitor: Any?
-    var globalKeyMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if #available(macOS 13.0, *) {
+            do {
+                if SMAppService.mainApp.status == .notRegistered || SMAppService.mainApp.status == .notFound {
+                    try SMAppService.mainApp.register()
+                }
+                if SMAppService.mainApp.status == .requiresApproval {
+                    sharedBrightness.message = "Cho phép Samsung Monitor Control trong Mục đăng nhập để tự khôi phục màn hình sau restart."
+                }
+            } catch {
+                sharedBrightness.message = "Chưa bật được chạy khi đăng nhập: \(error.localizedDescription)"
+                NSLog("Login item registration failed: %@", error.localizedDescription)
+            }
+        }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "sun.max.fill", accessibilityDescription: "Samsung Monitor Control")
@@ -1165,11 +1100,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.target = self
         }
 
-        popover = NSPopover()
+        popover = ControlCenterPanel()
         popover.animates = false
-        popover.contentSize = NSSize(width: 295, height: 500)
+        popover.contentSize = NSSize(width: 320, height: 440)
         popover.behavior = .transient
         popover.contentViewController = NSHostingController(rootView: MonitorPopoverView(model: sharedModel))
+        popover.contentView?.appearance = NSAppearance(named: .darkAqua)
+        sharedBrightness.samsungAction = { sharedModel.setBrightness(to: $0) }
+        sharedBrightness.samsungValue = { sharedModel.brightness }
+        sharedBrightness.samsungAvailable = { sharedModel.isConnected && !sharedModel.isPowerBusy && !sharedModel.isLoading }
+        sharedBrightness.samsungVolume = { sharedModel.volume }
+        sharedBrightness.samsungVolumeAction = { sharedModel.setVolume(to: $0) }
+        sharedBrightness.samsungMute = { sharedModel.toggleMute() }
+        if UserDefaults.standard.bool(forKey: "brightnessKeysEnabled") { sharedBrightness.enableKeys(prompt: false) }
+        if CommandLine.arguments.contains("--qc-keys") {
+            sharedBrightness.enableKeys(prompt: false)
+            print("KEYS_TRUSTED=\(AXIsProcessTrusted()) KEYS_ENABLED=\(sharedBrightness.keysEnabled)")
+            if #available(macOS 13.0, *) { print("LOGIN_ITEM_STATUS=\(SMAppService.mainApp.status.rawValue)") }
+            fflush(stdout)
+        }
+        if CommandLine.arguments.contains("--qc") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                self.togglePopover()
+                if let window = self.popover.contentViewController?.view.window {
+                    print("QC_WINDOW_ID=\(window.windowNumber)")
+                    fflush(stdout)
+                }
+            }
+        }
 
         // Monitor click outside to close popover
         mouseEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
@@ -1180,7 +1138,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Local monitor for Mac keyboard when app/popover is active
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self = self, self.popover.isShown else { return event }
+            guard let self = self, self.popover.isShown, sharedModel.remoteTabActive, sharedModel.remoteKeyboardEnabled, event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return event }
 
             // Do not intercept if user is typing in TextField (e.g. editIP)
             if let responder = NSApp.keyWindow?.firstResponder,
@@ -1194,14 +1152,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return event
         }
 
-        // Global monitor as fallback while popover is shown
-        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self = self, self.popover.isShown else { return }
-            _ = self.dispatchKey(event.keyCode)
-        }
     }
 
     func dispatchKey(_ keyCode: UInt16) -> Bool {
+        guard sharedModel.remoteTabActive, sharedModel.remoteKeyboardEnabled, sharedModel.isConnected, !sharedModel.isLoading, !sharedModel.isPairing, !sharedModel.isPowerBusy, !sharedModel.isRefreshingSharpness else { return false }
         switch keyCode {
         case 126: // Up Arrow
             sharedModel.sendKey("cursorUp")
@@ -1285,6 +1239,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
+            sharedModel.remoteTabActive = sharedModel.remoteKeyboardEnabled
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             if let window = popover.contentViewController?.view.window {
                 window.makeKeyAndOrderFront(nil)

@@ -27,5 +27,7 @@ DerivedData/
 
 # Binaries & packages
 bin/
+vendor/m1ddc/.objects/
+vendor/m1ddc/m1ddc
 *.wgt
 
